@@ -1,0 +1,25 @@
+{
+  "name": "spiderman-short",
+  "version": "1.0.0",
+  "private": true,
+  "description": "What if Spider-Man ended up in Ancient Egypt? — cartoon-3d-short skill pipeline (three.js in Remotion)",
+  "scripts": { "typecheck": "tsc --noEmit" },
+  "dependencies": {
+    "@react-three/fiber": "^9.3.0",
+    "@react-three/postprocessing": "^3.0.4",
+    "@remotion/bundler": "4.0.530",
+    "@remotion/cli": "4.0.530",
+    "@remotion/renderer": "4.0.530",
+    "@remotion/three": "4.0.530",
+    "postprocessing": "^6.37.8",
+    "react": "19.0.0",
+    "react-dom": "19.0.0",
+    "remotion": "4.0.530",
+    "three": "^0.180.0"
+  },
+  "devDependencies": {
+    "@types/react": "19.0.0",
+    "@types/three": "^0.180.0",
+    "typescript": "5.8.2"
+  }
+}
