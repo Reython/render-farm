@@ -8,8 +8,9 @@ import { ctex, waterNear, waterFar, cloudHD } from "./paint";
 import { LIGHTS, LOOK, LightPreset } from "./lights";
 import { TONE, CHAR, LFB, untone } from "./shade";
 import { NOINK } from "./ink";
-import { Pool, Actor, Fx, stage } from "./cast";
-import { FPS, SHOTS, camAt, egyptState, blockPos, webSegs, SMALL_BLOCK, SITE, V3, ShotDef } from "./story";
+import { Pool, Actor, Fx, stage, Place } from "./cast";
+import { handCanvas } from "./cards";
+import { FPS, SHOTS, camAt, egyptState, blockPos, webSegs, webGrowth, rampY, SMALL_BLOCK, SITE, V3, ShotDef } from "./story";
 
 export const loadKit = (): Promise<Kit> => Promise.resolve({});
 
@@ -242,6 +243,20 @@ export class World {
   private actor(i: number) { while (this.actors.length <= i) this.actors.push(new Actor(this.root)); return this.actors[i]; }
   private fx(i: number) { while (this.fxs.length <= i) this.fxs.push(new Fx(this.root)); return this.fxs[i]; }
 
+  /** world position of a placed card's drawn hand: handCanvas() through the exact transform the cast
+   *  loop applies to the mesh (position, camera yaw, roll, scale/mirror). Webs and the guide rope are
+   *  tied to these points, so a line always ends at the hand that is actually drawn. */
+  private placeHandWorld(p: Place, side: "L" | "R", cam: THREE.PerspectiveCamera): V3 | null {
+    if (!p.joints) return null;
+    const hc = handCanvas(p.joints, side);
+    const sc = p.scale ?? 1;
+    const lx = ((hc[0] - 300) * 0.00216) * (p.mirror ? -sc : sc), ly = (975 - hc[1]) * 0.00216 * sc;
+    const yaw = p.yaw ?? Math.atan2(cam.position.x - p.x, cam.position.z - p.z), roll = p.roll ?? 0;
+    const cr = Math.cos(roll), sr = Math.sin(roll), cy = Math.cos(yaw), sy = Math.sin(yaw);
+    const vx = lx * cr - ly * sr, vy = lx * sr + ly * cr;
+    return [p.x + vx * cy, p.y + vy, p.z - vx * sy];
+  }
+
   private setBeam(m: THREE.Mesh, a: V3, b: V3) {
     const va = V(...a), vb = V(...b), mid = va.clone().add(vb).multiplyScalar(0.5);
     const d = vb.sub(va), len = d.length();
@@ -308,8 +323,16 @@ export class World {
     this.smallBlock.rotation.z = THREE.MathUtils.degToRad(st.smallWob);
     this.sphinx2.visible = id >= 14;
     this.scaffold.visible = id === 14;
+    // cast staging is needed now (not just below): web origins and the guide-rope end are derived
+    // from the placed cards' drawn hands
+    const right = V(0, 0, 0).setFromMatrixColumn(cam.matrixWorld, 0);
+    const stg = stage(id, t, { pos: cam.position, right, sun: sunDir });
+    const heroPlace = stg.places.find((p) => p.tag === "hero");
+    const crewPlace = stg.places.find((p) => p.tag === "crewHand");
+    const heroHandR = heroPlace ? this.placeHandWorld(heroPlace, "R", cam) : null;
+    const heroHandL = heroPlace ? this.placeHandWorld(heroPlace, "L", cam) : null;
     // ropes: [0] restraint (before snap) / [1..2] the parted ends (after) / [3] guide rope to the crew
-    const top = V(bp[0], bp[1] + 3.9, bp[2] - 1.4), anchor = V(SITE.ramp.x, 32.4, -13.5);
+    const top = V(bp[0], bp[1] + 3.9, bp[2] - 1.4), anchor = V(SITE.ramp.x, 32.4, -14.5); // on the anchor frame's crossbeam (build.ts)
     const sag = (a: THREE.Vector3, b: THREE.Vector3, dip: number, n = 21) =>
       Array.from({ length: n }, (_, i) => { const u = i / (n - 1); return a.clone().lerp(b, u).add(V(0, -dip * 4 * u * (1 - u), 0)); });
     if (!st.snapped) {
@@ -321,17 +344,39 @@ export class World {
       this.ropes[1].set(sag(anchor, mid, 0.5)); this.ropes[1].mesh.visible = true;
       this.ropes[2].set(sag(top, mid.clone().add(V(0.4, -0.7, 0.3)), 0.4)); this.ropes[2].mesh.visible = true;
     }
-    const crewHand = V(SITE.ramp.x - 2.4, 1.15, bp[2] + 9.2);
-    this.ropes[3].set(sag(V(bp[0] - 1.4, bp[1] + 0.8, bp[2] + 1.8), crewHand, 0.5));
+    // guide rope: from the sled down the ramp INTO the lead crewman's drawn hand — the path hugs the
+    // ramp surface instead of spearing into the wedge (the old fixed end point sat inside the ramp)
+    const crewHandW = crewPlace ? this.placeHandWorld(crewPlace, "R", cam) : null;
+    if (crewHandW) {
+      const a = V(bp[0] - 1.4, bp[1] + 0.8, bp[2] + 1.8), b = V(...crewHandW);
+      const pts: THREE.Vector3[] = [];
+      for (let i = 0; i <= 20; i++) {
+        const u = i / 20, p = a.clone().lerp(b, u);
+        if (i > 0 && i < 20) p.y = Math.max(p.y, rampY(p.z) + 0.12);
+        pts.push(p);
+      }
+      this.ropes[3].set(pts);
+    } else {
+      this.ropes[3].set(sag(V(bp[0] - 1.4, bp[1] + 0.8, bp[2] + 1.8), V(SITE.ramp.x - 2.4, 1.15, bp[2] + 9.2), 0.5));
+    }
     this.ropes[3].mesh.visible = id === 2 || id === 3 || id === 8 || id === 13;
-    // webs (+ their halos follow the same beams)
-    const segs = webSegs(id, t);
+    // webs (+ their halos follow the same beams): hero-side ends snap to the DRAWN hands, and each
+    // web grows out of the hand over ~0.13 s from its fire moment instead of popping in fully formed
+    const segs = webSegs(id, t).map((s) => ({ ...s }));
+    if ((id === 5 || id === 6) && segs[0] && heroHandR) segs[0].b = heroHandR;
+    if (id === 8) { if (segs[0] && heroHandR) segs[0].a = heroHandR; if (segs[1] && heroHandL) segs[1].a = heroHandL; }
+    if (id === 13 && segs[0] && heroHandR) segs[0].a = heroHandR;
+    const grow = webGrowth(id, t);
+    if (grow < 1) for (const s of segs) {
+      const from = id === 8 || id === 13 ? s.a : s.b; // the hero end
+      const to = id === 8 || id === 13 ? s.b : s.a;   // the anchor end
+      const p: V3 = [from[0] + (to[0] - from[0]) * grow, from[1] + (to[1] - from[1]) * grow, from[2] + (to[2] - from[2]) * grow];
+      if (id === 8 || id === 13) s.b = p; else s.a = p;
+    }
     this.webs.forEach((m, i) => { if (i < segs.length) this.setBeam(m, segs[i].a, segs[i].b); else m.visible = false; });
     this.webHalos.forEach((m, i) => { if (i < segs.length) this.setBeam(m, segs[i].a, segs[i].b); else m.visible = false; });
 
     // ---- cast ----
-    const right = V(0, 0, 0).setFromMatrixColumn(cam.matrixWorld, 0);
-       const stg = stage(id, t, { pos: cam.position, right, sun: sunDir });
     this.frustum.setFromProjectionMatrix(this.m4.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse));
     const tint = s.light === "golden" ? "#ffcf9e" : "#ffffff";
     let ai = 0;
