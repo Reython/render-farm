@@ -71,6 +71,7 @@ export class World {
   private felucca: THREE.Group;
   private ropes: Strand[] = [];
   private webs: THREE.Mesh[] = [];
+  private webHalos: THREE.Mesh[] = [];
   private frustum = new THREE.Frustum();
   private m4 = new THREE.Matrix4(); private v = new THREE.Vector3(); private sph = new THREE.Sphere();
 
@@ -134,10 +135,12 @@ export class World {
     const sphinx = makeSphinx(sphinxMat, 4);
     sphinx.position.set(SITE.sphinx.x, 0, SITE.sphinx.z);
     sphinx.rotation.y = -Math.PI / 2; // faces the river (+z): head and paws toward the site cameras
+    sphinx.scale.setScalar(0.62); // ~18 m long: fits a portrait frame (the full-size build overflowed every shot)
     R.add(sphinx);
     this.sphinx2 = makeSphinx(sphinxMat, 8);
     this.sphinx2.position.set(56, 0, -37);
     this.sphinx2.rotation.y = 0.5;
+    this.sphinx2.scale.setScalar(0.62);
     R.add(this.sphinx2);
     // scaffolding for the unfinished one (shot 14 only)
     this.scaffold = new THREE.Group();
@@ -203,11 +206,19 @@ export class World {
     R.add(this.smallBlock);
     const ropeMat = lam("ropeStrand", () => ({ color: "#8a6f42" }));
     for (let i = 0; i < 4; i++) { const s = new Strand(20, 0.14, 0.14, ropeMat, 2); this.ropes.push(s); R.add(s.mesh); }
-    const webMat = new THREE.MeshBasicMaterial({ color: "#eef3ff" }); // basic: webs must read bright on any background (twoTone lambert shaded them black)
+    // v2 (BUGS_V2 B6): webs must read BRIGHT on any background. In v1 they were layer-0 world
+    // geometry, so the ink pass painted the thin cylinders solid near-black (its "thin ropes
+    // become solid lines" rule) and they vanished against shadowed masonry. Now: NOINK layer
+    // (never inked), a thicker white core, plus a soft additive halo for rim/readability.
+    const webMat = new THREE.MeshBasicMaterial({ color: "#ffffff" });
+    const webHaloMat = new THREE.MeshBasicMaterial({ color: "#dfe9ff", transparent: true, opacity: 0.12, blending: THREE.AdditiveBlending, depthWrite: false });
     for (let i = 0; i < 3; i++) {
-      const m = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 1, 5), webMat);
-      m.frustumCulled = false; m.visible = false;
+      const m = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 1, 6), webMat);
+      m.frustumCulled = false; m.visible = false; m.layers.set(NOINK);
       this.webs.push(m); R.add(m);
+      const h = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.15, 1, 8), webHaloMat);
+      h.frustumCulled = false; h.visible = false; h.layers.set(NOINK);
+      this.webHalos.push(h); R.add(h);
     }
   }
 
@@ -313,9 +324,10 @@ export class World {
     const crewHand = V(SITE.ramp.x - 2.4, 1.15, bp[2] + 9.2);
     this.ropes[3].set(sag(V(bp[0] - 1.4, bp[1] + 0.8, bp[2] + 1.8), crewHand, 0.5));
     this.ropes[3].mesh.visible = id === 2 || id === 3 || id === 8 || id === 13;
-    // webs
+    // webs (+ their halos follow the same beams)
     const segs = webSegs(id, t);
     this.webs.forEach((m, i) => { if (i < segs.length) this.setBeam(m, segs[i].a, segs[i].b); else m.visible = false; });
+    this.webHalos.forEach((m, i) => { if (i < segs.length) this.setBeam(m, segs[i].a, segs[i].b); else m.visible = false; });
 
     // ---- cast ----
     const right = V(0, 0, 0).setFromMatrixColumn(cam.matrixWorld, 0);
