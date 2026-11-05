@@ -1,5 +1,4 @@
 name: NiceAI Seedance 2.5 — Pick Me Up Episode 1
-run-name: PMU EP1 clip ${{ matrix.clip }} (Seedance 2.5)
 on:
   workflow_dispatch:
 permissions:
