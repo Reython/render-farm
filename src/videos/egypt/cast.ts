@@ -6,7 +6,8 @@
 import * as THREE from "three";
 import { Pen, fxBurst, fxShadow, fxContact } from "./toon";
 import {
-  FPS, SHOTS, V3, smooth, clamp01, egyptState, blockPos, dragPos, swingPalm, swingObelisk, SPIDEY_HOME,
+  FPS, SHOTS, V3, smooth, clamp01, egyptState, blockPos, dragPos, swingPalm, swingObelisk, palmCrown, descentHand,
+  blockWebEnds, smallWebEnd, OBELISK_A, SPIDEY_HOME,
   T_LAND, T_PALM_FIRE, T_PALM_DUMP, T_SWING0, T_SWING1, T_SNAP, T_CATCH, T_STOP, T_WOBBLE, T_SMALLCATCH, SITE, rampY,
 } from "./story";
 import { LIGHTS } from "./lights";
@@ -110,6 +111,8 @@ export class Fx {
 export type Place = {
   key: string; draw: (p: Pen) => void; x: number; y: number; z: number;
   scale?: number; mirror?: boolean; yaw?: number; geo?: "body" | "swing"; roll?: number; size?: [number, number, number];
+  /** world.ts hooks: "hero" = the web-slinger (web origins come from his drawn hands), "crewHand" = the guide-rope holder */
+  tag?: string; joints?: Joints;
 };
 export type FxPlace = { key: string; cw: number; ch: number; draw: (p: Pen) => void; x: number; y: number; z: number; w: number; h: number; flat?: boolean; rot?: number; soft?: boolean };
 /** sun = world direction TOWARD the sun (optional: when absent the scene's shadow-casting light is used) */
@@ -179,7 +182,7 @@ const lidAt = (t: number, i: number, swaps: number[] = []) => {
 const fkey = (o: object) => JSON.stringify(o, (_k, v) => (typeof v === "number" ? q(v) : v));
 
 // ---------------- Egypt staging ----------------
-import { figure, guardGear, POSES, Costume, Joints } from "./cards";
+import { figure, guardGear, handCanvas, POSES, Costume, Joints } from "./cards";
 
 export type Stage = { places: Place[]; fx: FxPlace[] };
 
@@ -201,16 +204,29 @@ const blob = (out: Stage, x: number, y: number, z: number, sc = 1, k = 1) => {
     w: 0.52 * sc, h: 0.4 * sc, flat: true, rot });
 };
 
-type CardOpts = { scale?: number; mirror?: boolean; yaw?: number; roll?: number; expr?: "glyph" | "glyphWow" | "glyphFlat"; gear?: boolean; blob?: boolean };
+type CardOpts = { scale?: number; mirror?: boolean; yaw?: number; roll?: number; expr?: "glyph" | "glyphWow" | "glyphFlat"; gear?: boolean; blob?: boolean; tag?: string; armsFront?: boolean };
 const card = (cam: CamInfo, out: Stage, costume: Costume, poseKey: string, pose: Joints, x: number, y: number, z: number, o: CardOpts = {}) => {
   const sc = o.scale ?? 1;
   const d = cam.pos.distanceTo(tmp.set(x, y + 1.2, z)) / sc;
   const [w, h, k] = tier(d);
   out.places.push({
-    key: `${costume}|${poseKey}|${o.expr ?? "g"}|${w}`, x, y, z, scale: sc, mirror: o.mirror, yaw: o.yaw, roll: o.roll, size: [w, h, k],
-    draw: (p) => { figure(p, costume, { j: pose, expr: o.expr }); if (o.gear) guardGear(p, pose); },
+    key: `${costume}|${poseKey}|${o.expr ?? "g"}|${w}${o.armsFront ? "|af" : ""}`, x, y, z, scale: sc, mirror: o.mirror, yaw: o.yaw, roll: o.roll, size: [w, h, k],
+    tag: o.tag, joints: pose,
+    draw: (p) => { figure(p, costume, { j: pose, expr: o.expr, armsFront: o.armsFront }); if (o.gear) guardGear(p, pose); },
   });
   if (o.blob !== false) blob(out, x, y, z, sc);
+};
+const lerpN = (a: number, b: number, k: number) => a + (b - a) * k;
+/** card origin that puts the pose's drawn RIGHT hand exactly on the world point `handPt`
+ *  (the card yaw follows the camera, as world.ts will set it; world.ts also re-derives the exact
+ *  hand position from the final transform, so the web endpoint lands on the hand regardless) */
+const placeByHand = (cam: CamInfo, handPt: V3, pose: Joints, roll: number): V3 => {
+  const hc = handCanvas(pose, "R");
+  const lx = (hc[0] - 300) * SU, ly = (975 - hc[1]) * SU;
+  const yaw = Math.atan2(cam.pos.x - handPt[0], cam.pos.z - handPt[2]);
+  const cr = Math.cos(roll), sr = Math.sin(roll), cy = Math.cos(yaw), sy = Math.sin(yaw);
+  const vx = lx * cr - ly * sr, vy = lx * sr + ly * cr;
+  return [handPt[0] - vx * cy, handPt[1] - vy, handPt[2] + vx * sy];
 };
 const dust = (out: Stage, x: number, y: number, z: number, u: number, s = 1) => {
   if (u < 0 || u >= 1) return;
@@ -223,7 +239,7 @@ const haulCrew = (cam: CamInfo, out: Stage, t: number, scatter = 0) => {
     const x = -38 + line * (2.2 + k * 0.4) + scatter * (line * (1.5 + k * 0.8)), z = 10.5 + k * 1.7 + scatter * 1.2;
     const ph = q(Math.sin(t * 2.1 + k * 0.7 + line), 6);
     const pose: Joints = scatter > 0.5 ? POSES.stand : { ...POSES.haul, lean: 16 + ph * 3 };
-    card(cam, out, "worker", scatter > 0.5 ? "stand" : `haul${ph}`, pose, x, 0, z, { expr: scatter > 0.5 ? "glyphWow" : "glyph", scale: 0.97 });
+    card(cam, out, "worker", scatter > 0.5 ? "stand" : `haul${ph}`, pose, x, 0, z, { expr: scatter > 0.5 ? "glyphWow" : "glyph", scale: 0.97, tag: i === 0 ? "crewHand" : undefined });
   }
 };
 /** the pharaoh's platform group: pharaoh + guard + two fan bearers on the dais (top y=1.7) */
@@ -284,29 +300,59 @@ export const stage = (id: number, t: number, cam: CamInfo): Stage => {
       card(cam, out, "worker", lt > 4.0 ? "point" : "stand", lt > 4.0 ? POSES.point : POSES.stand, -14 + i * 3.2, 0, 9 + i * 1.4, { scale: 0.96 });
   }
   if (id === 5) {
-    if (t < T_PALM_DUMP) {
+    // v3: he does NOT hang before the web exists — he stands under the palm reaching up, fires at
+    // T_PALM_FIRE (impact star on the crown, line grows out of his hand), leaps into the hang, and
+    // the bending crown lowers him onto the dump spot the pendulum actually reaches.
+    const STAND5: V3 = [-11.3, 0, 5.6];
+    const swDump = swingPalm(T_PALM_DUMP), dOrg = placeByHand(cam, swDump.hand, POSES.spideySwing, -swDump.th * 0.85);
+    const DUMP5: V3 = [dOrg[0], 0, dOrg[2]];
+    if (t < T_PALM_FIRE) {
+      card(cam, out, "spidey", "reach", { ...POSES.spideyStand, armR: [157, -3] }, STAND5[0], 0, STAND5[2], { tag: "hero" });
+    } else if (t < T_PALM_DUMP) {
       const { hand, th } = swingPalm(t);
-      card(cam, out, "spidey", "swing", POSES.spideySwing, hand[0] + Math.sin(th) * 1.85, hand[1] - Math.cos(th) * 1.85, hand[2],
-        { roll: -th * 0.85, blob: false });
+      const o = placeByHand(cam, hand, POSES.spideySwing, -th * 0.85);
+      let x = o[0], y = o[1], z = o[2];
+      const leap = clamp01((t - T_PALM_FIRE) / 0.27);
+      if (leap < 1) { const e = smooth(leap); x = lerpN(STAND5[0], o[0], e); z = lerpN(STAND5[2], o[2], e); y = lerpN(0, o[1], e) + Math.sin(leap * Math.PI) * 0.7; }
+      card(cam, out, "spidey", "swing", POSES.spideySwing, x, y, z, { roll: -th * 0.85, blob: false, tag: "hero", armsFront: true });
+      if (leap >= 1 && y < 0.22) dust(out, x, 0.3, z + 0.3, ((t * 7) % 1) * 0.9, 0.8); // feet brush the sand at the arc bottom
+      if (t < T_PALM_FIRE + 0.3) { const c = palmCrown(t); dust(out, c[0], c[1], c[2], (t - T_PALM_FIRE) / 0.3, 1.3); } // impact star on the crown
     } else if (t < T_PALM_DUMP + 0.7) {
-      card(cam, out, "spidey", "crouch", POSES.spideyCrouch, -11.5, 0, 5.2, {});
-      dust(out, -11.5, 0.4, 5.6, (t - T_PALM_DUMP) / 0.45, 1.1);
+      card(cam, out, "spidey", "crouch", POSES.spideyCrouch, DUMP5[0], 0, DUMP5[2], { tag: "hero" });
+      dust(out, DUMP5[0], 0.4, DUMP5[2] + 0.4, (t - T_PALM_DUMP) / 0.45, 1.1);
     } else {
-      card(cam, out, "spidey", "flat", { ...POSES.stand, headTilt: 9 }, -11.5, 0, 5.2, {});
+      card(cam, out, "spidey", "flat", { ...POSES.stand, headTilt: 9 }, DUMP5[0], 0, DUMP5[2], { tag: "hero" });
     }
     for (let i = 0; i < 3; i++)
       card(cam, out, "worker", i === 1 ? "point" : "stand", i === 1 ? POSES.point : POSES.stand, -16 + i * 4.5, 0, 11 + i, { expr: t >= T_PALM_DUMP ? "glyphWow" : "glyph", scale: 0.96 });
   }
   if (id === 6) {
-    if (t > T_SWING0 - 0.7 && t < T_SWING1 + 0.3) {
+    // v3: he waits BY the obelisk, leaps as he fires (star on the pyramidion tip), swings, then pays
+    // out line and drops to a landing beside the obelisk — no pop-in, no swing out of the frame.
+    const BASE6: V3 = [26.5, 0, 5.5], LAND6: V3 = [23.8, 0, 2.6];
+    const T_LEAP = T_SWING0 - 0.55, T_LAND = T_SWING1 + 0.4;
+    if (t < T_LEAP) {
+      card(cam, out, "spidey", "stand", POSES.spideyStand, BASE6[0], 0, BASE6[2], { tag: "hero" });
+    } else if (t < T_SWING0) {
+      const so = swingObelisk(T_SWING0), o = placeByHand(cam, so.hand, POSES.spideySwing, -so.th * 0.9);
+      const k = smooth(clamp01((t - T_LEAP) / (T_SWING0 - T_LEAP)));
+      card(cam, out, "spidey", "swing", POSES.spideySwing, lerpN(BASE6[0], o[0], k), lerpN(0, o[1], k) + Math.sin(k * Math.PI) * 0.8, lerpN(BASE6[2], o[2], k),
+        { roll: -so.th * 0.9, blob: false, tag: "hero", armsFront: true });
+    } else if (t <= T_SWING1) {
       const { hand, th } = swingObelisk(t);
-      card(cam, out, "spidey", "swing", POSES.spideySwing, hand[0] + Math.sin(th) * 1.9, hand[1] - Math.cos(th) * 1.9, hand[2],
-        { roll: -th * 0.9, blob: false });
-    } else if (t >= T_SWING1 + 0.3) {
-      card(cam, out, "spidey", lt > 4.9 ? "stand" : "crouch", lt > 4.9 ? POSES.spideyStand : POSES.spideyCrouch, 23.5, 0, 8.5, {});
+      const o = placeByHand(cam, hand, POSES.spideySwing, -th * 0.9);
+      card(cam, out, "spidey", "swing", POSES.spideySwing, o[0], o[1], o[2], { roll: -th * 0.9, blob: false, tag: "hero", armsFront: true });
+    } else if (t < T_LAND) {
+      const hd = descentHand(t), roll = -swingObelisk(T_SWING1).th * 0.9 * (1 - clamp01((t - T_SWING1) / 0.4));
+      const o = placeByHand(cam, hd, POSES.spideySwing, roll);
+      card(cam, out, "spidey", "swing", POSES.spideySwing, o[0], o[1], o[2], { roll, blob: false, tag: "hero", armsFront: true });
+    } else if (t < T_LAND + 0.55) {
+      card(cam, out, "spidey", "crouch", POSES.spideyCrouch, LAND6[0], 0, LAND6[2], { tag: "hero" });
+      dust(out, LAND6[0], 0.4, LAND6[2] + 0.4, (t - T_LAND) / 0.45, 1.1);
     } else {
-      card(cam, out, "spidey", "stand", POSES.spideyStand, SPIDEY_HOME[0], 0, SPIDEY_HOME[2], {});
+      card(cam, out, "spidey", "stand", POSES.spideyStand, LAND6[0], 0, LAND6[2], { tag: "hero" });
     }
+    if (t >= T_SWING0 - 0.12 && t < T_SWING0 + 0.18) dust(out, OBELISK_A[0], OBELISK_A[1], OBELISK_A[2], (t - (T_SWING0 - 0.12)) / 0.3, 1.3); // impact star on the tip
     for (let i = 0; i < 7; i++)
       card(cam, out, "worker", "point", POSES.point, 18 + i * 3.6, 0, 13 + (i % 3) * 2.4, { expr: t >= T_SWING0 ? "glyphWow" : "glyph", scale: 0.95 });
     dais(cam, out, t, "stand", POSES.stand);
@@ -326,10 +372,10 @@ export const stage = (id: number, t: number, cam: CamInfo): Stage => {
     const scatter = t > T_SNAP + 0.8 ? 1 : 0;
     haulCrew(cam, out, t, scatter);
     if (t < T_CATCH - 0.35) {
-      card(cam, out, "spidey", "stand", POSES.spideyStand, -26.5, 0, 7.5, {});
+      card(cam, out, "spidey", "stand", POSES.spideyStand, -26.5, 0, 7.5, { tag: "hero" });
     } else {
       const d = dragPos(t);
-      card(cam, out, "spidey", "drag", POSES.spideyDrag, d[0], 0, d[2], {});
+      card(cam, out, "spidey", "drag", POSES.spideyDrag, d[0], 0, d[2], { tag: "hero", armsFront: true });
       if (t > T_CATCH && t < T_STOP) {
         dust(out, d[0] - 0.4, 0.35, d[2] + 0.9, ((t * 7) % 1) * 0.9, 0.9);
         dust(out, -38, rampY(blockPos(st.blockU)[2]) + 0.6, blockPos(st.blockU)[2] + 2.6, ((t * 5 + 0.4) % 1) * 0.9, 1.3);
@@ -338,6 +384,10 @@ export const stage = (id: number, t: number, cam: CamInfo): Stage => {
     }
     for (let i = 0; i < 3; i++)
       card(cam, out, "worker", scatter ? "kneel" : "stand", scatter ? POSES.kneel : POSES.stand, -44 + i * 2.4, 0, 13.5 + i, { expr: t >= T_SNAP ? "glyphWow" : "glyph", scale: 0.95 });
+    if (t >= T_CATCH - 0.05 && t < T_CATCH + 0.25) { // impact stars where the catch webs bite the block face
+      const [e1, e2] = blockWebEnds(t), u = (t - (T_CATCH - 0.05)) / 0.3;
+      dust(out, e1[0], e1[1], e1[2], u, 1.2); dust(out, e2[0], e2[1], e2[2], u, 1.2);
+    }
   }
   if (id === 9) {
     dais(cam, out, t, "clap", POSES.clap, { cheer: true });
@@ -388,7 +438,8 @@ export const stage = (id: number, t: number, cam: CamInfo): Stage => {
   }
   if (id === 13) {
     const caught = t >= T_SMALLCATCH;
-    card(cam, out, "spidey", caught ? "catch" : "sit", caught ? POSES.spideyCatch : { ...POSES.spideyCatch, armR: [26, 12] }, -24, 0.55, 8, {});
+    card(cam, out, "spidey", caught ? "catch" : "sit", caught ? POSES.spideyCatch : { ...POSES.spideyCatch, armR: [26, 12] }, -24, 0.55, 8, { tag: "hero", armsFront: true });
+    if (t >= T_SMALLCATCH - 0.05 && t < T_SMALLCATCH + 0.25) { const e = smallWebEnd(); dust(out, e[0], e[1], e[2], (t - (T_SMALLCATCH - 0.05)) / 0.3, 1.2); } // impact star on the block top
     haulCrew(cam, out, t);
     for (let i = 0; i < 2; i++)
       card(cam, out, "worker", "stand", POSES.stand, -17 + i * 3.4, 0, 12.5, { scale: 0.95 });
