@@ -48,6 +48,21 @@ export type FigOpts = {
   j?: Joints;
   light?: number;
   expr?: "glyph" | "glyphWow" | "glyphFlat";
+  /** web poses only: draw BOTH arms after the head, so a gripping hand is never painted over by the head disc */
+  armsFront?: boolean;
+};
+
+/** canvas position of a hand (limb end) for a pose, exactly as figure() draws it (lean applied about the hip).
+ *  Web origins are derived from this, so a web always starts at the drawn hand. */
+export const handCanvas = (j: Joints, side: "L" | "R"): P2 => {
+  const jj: Required<Joints> = { ...DEF, ...j };
+  const F = frame(jj);
+  const root = side === "R" ? F.shR : F.shL;
+  const a = side === "R" ? jj.armR : jj.armL;
+  const mid = add(root, dir(a[0]), 128);
+  const end = add(mid, dir(a[0] + a[1]), 118);
+  const dx = end[0] - F.hip[0], dy = end[1] - F.hip[1], c = Math.cos(rad(jj.lean)), s = Math.sin(rad(jj.lean));
+  return [F.hip[0] + dx * c - dy * s, F.hip[1] + dx * s + dy * c];
 };
 
 /** skeleton geometry shared by every figure: returns anchors after applying lean about the hip point */
@@ -124,8 +139,11 @@ export const figure = (p: Pen, costume: Costume, o: FigOpts = {}) => {
   p.g.translate(F.hip[0], F.hip[1]); p.g.rotate(rad(j.lean)); p.g.translate(-F.hip[0], -F.hip[1]);
   const armCol = costume === "spidey" ? SPIDEY_RED : costume === "pharaoh" || costume === "priest" ? LINEN : "#C89B6A";
   const legCol = costume === "spidey" ? SPIDEY_BLUE : costume === "priest" ? LINEN : "#C89B6A";
+  let handL: P2 = [0, 0], handR: P2 = [0, 0];
+  const drawArmL = () => { handL = limb(p, F.shL, j.armL[0], 128, j.armL[1], 118, 27, armCol); };
+  const drawArmR = () => { handR = limb(p, F.shR, j.armR[0], 128, j.armR[1], 118, 27, armCol); };
   // far arm + legs (pharaoh/worker/guard: bare legs under the kilt; priest: robe-white legs)
-  limb(p, F.shL, j.armL[0], 128, j.armL[1], 118, 27, armCol);
+  if (!o.armsFront) drawArmL();
   limb(p, F.hipL, j.legL[0], 148, j.legL[1], 158, 30, legCol);
   limb(p, F.hipR, j.legR[0], 148, j.legR[1], 158, 30, legCol);
   // torso block
@@ -165,7 +183,7 @@ export const figure = (p: Pen, costume: Costume, o: FigOpts = {}) => {
     p.poly([[300 - tw / 2, F.torsoBot - 46], [300 + tw / 2, F.torsoBot - 46], [300 + tw / 2 - 10, F.torsoBot + 26], [300 - tw / 2 + 10, F.torsoBot + 26]], LINEN_D, 5);
   }
   // near arm
-  const handR = limb(p, F.shR, j.armR[0], 128, j.armR[1], 118, 27, armCol);
+  if (!o.armsFront) drawArmR();
   // head
   const hc = F.headC, hr = F.headR;
   if (costume === "spidey") {
@@ -209,8 +227,10 @@ export const figure = (p: Pen, costume: Costume, o: FigOpts = {}) => {
     }
     glyphFace(p, hc, hr, o.expr ?? "glyph", j.headTilt);
   }
+  // web poses: arms over the head, so the gripping hands stay visible and meet their webs
+  if (o.armsFront) { drawArmL(); drawArmR(); }
   p.g.restore();
-  return { handR, headC: hc };
+  return { handR, handL, headC: hc };
 };
 
 // ---------------- named poses ----------------
@@ -218,8 +238,8 @@ export const POSES = {
   spideyStand: { armR: [152, 6], armL: [-18, -10], legL: [-8, 2], legR: [8, -2], headTilt: -3 } as Joints,
   spideyFall: { lean: 18, armR: [140, 30], armL: [-120, -40], legL: [-38, 30], legR: [30, -24], headTilt: 8 } as Joints,
   spideyCrouch: { crouch: 0.85, armR: [38, 10], armL: [-30, -60], legL: [-52, 74], legR: [44, 58], headTilt: -4 } as Joints,
-  spideySwing: { lean: -13, armR: [168, 4], armL: [52, 30], legL: [38, -48], legR: [-30, -18], headTilt: 5 } as Joints,
-  spideyDrag: { lean: -24, crouch: 0.25, armR: [128, 12], armL: [118, -6], legL: [-34, 8], legR: [-18, 22], headTilt: -6 } as Joints,
+  spideySwing: { lean: -13, armR: [138, -4], armL: [52, 30], legL: [38, -48], legR: [-30, -18], headTilt: 5 } as Joints,
+  spideyDrag: { lean: -12, crouch: 0.25, armR: [134, -1], armL: [-172, 8], legL: [-34, 8], legR: [-18, 22], headTilt: -6 } as Joints,
   spideyWave: { armR: [150, 24], armL: [-24, -14], legL: [-10, 4], legR: [10, -4] } as Joints,
   spideyCatch: { crouch: 0.55, armR: [160, 10], armL: [-12, -8], legL: [-30, 40], legR: [26, 34], headTilt: -8 } as Joints,
   spideyFacepalm: { armR: [128, 118], armL: [-16, -10], legL: [-7, 2], legR: [7, -2], headTilt: 10 } as Joints,
