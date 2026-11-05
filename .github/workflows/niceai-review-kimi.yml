@@ -1,0 +1,30 @@
+name: niceai-review-kimi
+on:
+  workflow_dispatch:
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Build request
+        run: |
+          cat > prompt.txt <<'PROMPT'
+          You are the senior reviewer for a 79.5-second vertical (9:16) cartoon-3D YouTube short, "What if Spider-Man ended up in Ancient Egypt?", built in Remotion + three.js: flat ink-outlined 2D character cards staged inside a painted 3D world. The viewer rejected v2 for web and arm bugs. A frame-by-frame audit found 15 defects:
+          ANCHORS (9): shot 8 catch/drag (f1441-1516) - both web origins float 0.6-0.9 m above the hero's raised hands for the whole drag (hardcoded heights in the web segment table); shot 5 (f698-736) - hero hangs in the swing pose 39 frames with NO web drawn at all; shot 5 (f740-756) - hero cropped out, web dangles ending mid-air; shot 6 - the swing happens off-frame (only a web dash at the obelisk tip f860-891), then the hero swings out of the top of the frame with no web visible (f953-973); shot 13 (f2158-2183) - web lands on the hero's HEAD instead of his hand (fixed origin ~1 m off); guide rope spears into the ramp slope and stops short of the crew (shots 3 and 8, endpoint is a fixed point buried inside the ramp wedge); restraint rope's top end floats ~5 m above the ramp top with no anchor object (shot 3).
+          OCCLUSION/ENDPOINTS (3): f758-775 web end lands ON the bent palm trunk's face; f904-938 web terminates on the temple pylon's brick face, hero hangs in front of the wall with the line ending beside his head; f2156-2157 web overshoots the small block, endpoint ~0.85 m above its top face. Note: webs are already real 3D cylinders inside the scene, drawn straight from point A to point B with no collision logic.
+          ARMS (3, systemic): the gripping/raised hands land INSIDE the oversized head disc and are painted over by the head (draw order: head drawn after arms), in both swing poses and the drag pose - so hands never visibly meet webs anywhere; in the drag pose both hands are swallowed.
+          Also flagged: f776-798 are 23 frames of empty wall mid-swing; f974 hero pops into frame inside one continuous shot.
+          PLANNED FIXES: (A) compute every web origin from the hero's actual drawn hand position per pose/frame (no hardcoded offsets); far end always on a visible anchor object in frame (obelisk tip, pyramid corner, palm crown, sphinx paw, block top) with an impact star at the attach point; web present from frame 1 of every hang/swing; reframe shot 6 so the swing and web stay in frame; guide rope endpoint tied to an actual crew figure's hand; restraint rope gets a visible anchor post at its top end. (B) endpoints land ON the top surface/edge of anchors, never mid-face, never overshooting into air; where a straight web would visually cross a nearer wall, choose a different anchor so the line reads cleanly. (C) fix draw order / pose angles so the gripping hand is visible and touches the web origin in every web pose, without changing the locked character design (oversized round white head, thick black outline, bean eyes, wide smile, flat colours). (Notes) reframe to remove the empty-wall stretch without changing total frame count or narration timing; hero enters from the frame edge instead of popping in.
+          ANSWER THESE: 1) Do these fixes address the ROOT CAUSES, or are any of them cosmetic? Go defect by defect for the 15. 2) What would a picky viewer still catch after these fixes? Name concrete failure modes we have not listed. 3) Give a per-defect stills-QA checklist: exactly what must be visible in the checked frame for the defect to count as fixed. 4) Risks: the draw-order change affects every frame the hero appears in - what regressions should we look for? Be specific and practical; this goes straight into the fix pass.
+          PROMPT
+          jq -n --arg model "kimi-k3-1-pro" --rawfile content prompt.txt '{model:$model, messages:[{role:"user", content:$content}], reasoning_effort:"high", max_tokens:16000}' > req.json
+      - name: Call NiceAI
+        run: |
+          curl -s -m 600 https://api.niceai.rest/v1/chat/completions -H "Authorization: Bearer ${{ secrets.NICEAI_KEY }}" -H "Content-Type: application/json" -d @req.json -o response.json
+          head -c 1200 response.json; echo
+      - name: Upload response
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kimi-review
+          path: response.json
