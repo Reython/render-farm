@@ -1,0 +1,16 @@
+name: niceai-test
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Models list
+        run: |
+          curl -s -m 60 https://api.niceai.rest/v1/models -H "Authorization: Bearer ${{ secrets.NICEAI_KEY }}" | head -c 3000
+          echo
+      - name: Chat ping
+        run: |
+          curl -s -m 120 https://api.niceai.rest/v1/chat/completions -H "Authorization: Bearer ${{ secrets.NICEAI_KEY }}" -H "Content-Type: application/json" -d '{"model":"kimi-k3-1-pro","messages":[{"role":"user","content":"Reply with exactly: KIMI_OK"}],"max_tokens":50}' | head -c 2000
+          echo
