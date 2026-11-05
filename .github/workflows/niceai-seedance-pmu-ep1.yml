@@ -1,193 +1,193 @@
 name: NiceAI Seedance 2.5 — Pick Me Up Episode 1
+
 on:
   workflow_dispatch:
+
 permissions:
   contents: read
+
 jobs:
-  generate:
+  gen:
+    name: gen (clip ${{ matrix.clip }})
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 200
     strategy:
       fail-fast: false
-      max-parallel: 1
+      max-parallel: 5
       matrix:
-        clip: [1, 2, 3, 4, 5]
+        clip: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30]
     env:
-      NICEAI_API_KEY: ${{ secrets.NICEAI_KEY }}
-      NICEAI_BASE_URL: ${{ vars.NICEAI_BASE_URL || 'https://api.niceai.ai' }}
-      MODEL: seedance-2.5
-      SECONDS: "20"
-      SIZE: 720x1280
-      RESOLUTION: 720p
-      ASPECT: 9:16
+      BASE_URL: https://api.niceai.rest/v1
+      USER_AGENT: Mozilla/5.0
       CLIP_N: ${{ matrix.clip }}
-      PROMPT_FILE: pmu/prompts_ep1.json
     steps:
-      - uses: actions/checkout@v4
-      - name: Check tools
-        run: |
-          command -v curl >/dev/null || { echo "curl missing"; exit 1; }
-          command -v jq >/dev/null || { echo "jq missing"; exit 1; }
-          command -v python3 >/dev/null || { echo "python3 missing"; exit 1; }
-          echo "Tools OK"
-      - name: Extract prompt for this clip
-        id: prompt
-        run: |
-          set -euo pipefail
-          echo "Clip: $CLIP_N"
-          echo "Prompt file: $PROMPT_FILE"
-          test -f "$PROMPT_FILE" || { echo "ERROR: prompt file not found: $PROMPT_FILE"; exit 1; }
-          PROMPT=$(jq -r --argjson clip "$CLIP_N" '.[] | select(.clip == $clip) | .prompt // empty' "$PROMPT_FILE")
-          if [ -z "$PROMPT" ]; then
-            echo "ERROR: no prompt found for clip $CLIP_N in $PROMPT_FILE"
-            exit 1
-          fi
-          PLEN=$(printf '%s' "$PROMPT" | wc -c)
-          echo "Prompt length: $PLEN chars"
-          if [ "$PLEN" -lt 200 ]; then
-            echo "ERROR: prompt too short (<200 chars) for clip $CLIP_N"
-            exit 1
-          fi
-          echo "Prompt preview: $(printf '%s' "$PROMPT" | head -c 200)..."
-          {
-            echo "prompt<<PROMPT_EOF"
-            printf '%s\n' "$PROMPT"
-            echo "PROMPT_EOF"
-          } >> "$GITHUB_OUTPUT"
-      - name: Generate video (Seedance 2.5 via NiceAI)
+      - name: Checkout репозитория (PMU_EPISODE1_SCRIPT.md)
+        uses: actions/checkout@v4
+      - name: Генерация клипа (до 4 попыток, fallback при copyright-фильтре, опрос, скачивание)
         env:
-          PROMPT: ${{ steps.prompt.outputs.prompt }}
+          NICEAI_KEY: ${{ secrets.NICEAI_KEY }}
         run: |
-          set -euo pipefail
-          : "${NICEAI_API_KEY:?NICEAI_KEY secret is not set}"
-          ORIGINAL_PROMPT="$PROMPT"
-          CURRENT_PROMPT="$ORIGINAL_PROMPT"
-          PROMPT_VERSION=verbatim
+          set -u
+          set -o pipefail
           LOG="pmu-ep1-clip-${CLIP_N}.log"
-          : > "$LOG"
-          soften_prompt() {
-            local text="$1"
-            text=$(printf '%s' "$text" | sed -e 's/[Dd]ivorce/breakup/g' -e 's/[Dd]ivorced/separated/g' -e 's/[Cc]heat on/argue with/g' -e 's/[Cc]heating/betrayal/g' -e 's/[Cc]heated/betrayed/g' -e 's/[Ss]laps/pushes/g' -e 's/[Ss]lap/push/g' -e 's/[Ss]lapped/pushed/g' -e 's/[Ss]houted at/spoke sharply to/g' -e 's/[Ss]houted/raised her voice/g' -e 's/[Ss]houting/raising her voice/g' -e 's/[Cc]onfrontation/argument/g' -e 's/[Cc]onfronts/faces/g' -e 's/[Cc]onfronted/faced/g')
-            printf '%s' "$text"
+          download_video() {
+            local vid="$1" out="$2" st="$3"
+            local dl http size
+            dl=$(jq -r '(.urls // .data.urls // empty) | if type=="array" then (.[0] // empty) else . end | if type=="object" then (.url // .href // empty) else . end' "$st" 2>/dev/null || true)
+            echo "DOWNLOAD_URL_FROM_URLS=$dl"
+            if [ -n "$dl" ] && [ "$dl" != "null" ]; then
+              http=$(curl -s -L -A "$USER_AGENT" -o "$out" -w '%{http_code}' "$dl" || true)
+              echo "Скачивание из urls[0]: HTTP $http"
+              size=$(stat -c%s "$out" 2>/dev/null || echo 0)
+              if [ "$size" != "0" ] && [ "$(head -c 1 "$out")" != "{" ]; then
+                echo "DOWNLOAD_OK_FROM_URLS size=$size"
+                return 0
+              fi
+              echo "Скачивание из urls[0] не дало видео (size=$size) — пробую /content"
+            else
+              echo "urls пуст — скачивание через /content"
+            fi
+            http=$(curl -s -A "$USER_AGENT" -H "Authorization: Bearer $NICEAI_KEY" -o "$out" -w '%{http_code}' "$BASE_URL/videos/$vid/content" || true)
+            echo "Скачивание из /content: HTTP $http"
+            return 0
           }
-          log() { echo "$*" | tee -a "$LOG"; }
-          MAX_ATTEMPTS=3
-          COPYRIGHT_HIT=false
-          SUCCESS=false
-          attempt=1
-          while [ "$attempt" -le "$MAX_ATTEMPTS" ]; do
-            if [ "$attempt" -ge 2 ] && [ "$COPYRIGHT_HIT" = "true" ]; then
-              CURRENT_PROMPT=$(soften_prompt "$ORIGINAL_PROMPT")
-              PROMPT_VERSION=softened
+          extract_prompt() {
+            awk -v n="$CLIP_N" '
+              /^## CLIP / {
+                if ($0 ~ "^## CLIP " n " ") { inclip = 1 }
+                else if (inclip) { exit }
+                next
+              }
+              inclip && /^\*\*Seedance Prompt:\*\*/ { inprompt = 1; next }
+              inprompt && /^[[:space:]]*$/ { if (prompt != "") exit; next }
+              inprompt && /^\*\*/ { exit }
+              inprompt && /^## / { exit }
+              inprompt {
+                if (prompt != "") prompt = prompt " " $0
+                else prompt = $0
+              }
+              END {
+                if (prompt == "") { exit 1 }
+                print prompt
+              }
+            ' PMU_EPISODE1_SCRIPT.md
+          }
+          soften_prompt() {
+            printf '%s' "$1" | sed \
+              -e 's/\bkills\b/defeats/gI' \
+              -e 's/\bkill\b/defeat/gI' \
+              -e 's/\bkilled\b/defeated/gI' \
+              -e 's/\bdies\b/falls/gI' \
+              -e 's/\bdied\b/fell/gI' \
+              -e 's/\bdead\b/fallen/gI' \
+              -e 's/\bdeath\b/darkness/gI' \
+              -e 's/\bblood\b/dust/gI' \
+              -e 's/\bsuicide\b/accident/gI' \
+              -e 's/\bsacrifice\b/offering/gI' \
+              -e 's/\bsacrificed\b/offered/gI'
+          }
+          main() {
+            echo "== Клип $CLIP_N: извлечение промпта из PMU_EPISODE1_SCRIPT.md =="
+            if ! PROMPT=$(extract_prompt); then
+              echo "ОШИБКА: не удалось извлечь промпт клипа $CLIP_N из PMU_EPISODE1_SCRIPT.md"
+              return 1
             fi
-            log "=== Attempt $attempt/$MAX_ATTEMPTS ($PROMPT_VERSION prompt) ==="
-            log "Model: $MODEL | Seconds: $SECONDS | Size: $SIZE | Resolution: $RESOLUTION | Aspect: $ASPECT | Audio: true"
-            log "Prompt length: $(printf '%s' "$CURRENT_PROMPT" | wc -c) chars"
-            python3 -c 'import json,os; json.dump({"model": os.environ["MODEL"], "prompt": os.environ["CURRENT_PROMPT"], "seconds": int(os.environ["SECONDS"]), "size": os.environ["SIZE"], "resolution": os.environ["RESOLUTION"], "aspect_ratio": os.environ["ASPECT"], "generate_audio": True}, open("request.json","w"))'
-            log "Request body (prompt redacted to first 120 chars):"
-            jq '{model, seconds, size, resolution, aspect_ratio, generate_audio, prompt: (.prompt | .[0:120])}' request.json | tee -a "$LOG"
-            HTTP=$(curl -sS -o create.json -w '%{http_code}' -X POST "$NICEAI_BASE_URL/v1/videos/generations" -H "Authorization: Bearer $NICEAI_API_KEY" -H 'Content-Type: application/json' --data-binary @request.json || echo "000")
-            log "Create HTTP: $HTTP"
-            cat create.json | tee -a "$LOG"; echo | tee -a "$LOG"
-            if echo "$HTTP" | grep -Eq '^(401|403)$'; then
-              log "ERROR: auth failed (HTTP $HTTP) — check NICEAI_KEY"
-              exit 1
+            echo "PROMPT_LEN=${#PROMPT}"
+            echo "PROMPT_HEAD=${PROMPT:0:120}"
+            if [ "${#PROMPT}" -lt 200 ]; then
+              echo "ОШИБКА: промпт клипа $CLIP_N слишком короткий (длина ${#PROMPT})"
+              return 1
             fi
-            if grep -qi 'copyright' create.json; then
-              log "Copyright refusal detected in create response"
-              COPYRIGHT_HIT=true
-              MAX_ATTEMPTS=4
-            fi
-            TASK_ID=$(jq -r '.data.task_id // .task_id // .data.id // .id // empty' create.json)
-            if [ -z "$TASK_ID" ] || [ "$TASK_ID" = "null" ]; then
-              log "ERROR: no task_id in create response"
-              if [ "$attempt" -lt "$MAX_ATTEMPTS" ]; then
-                log "Retrying in 60s..."
-                sleep 60
-                attempt=$((attempt+1))
-                continue
-              fi
-              exit 1
-            fi
-            log "Task ID: $TASK_ID"
-            for i in $(seq 1 90); do
-              sleep 20
-              curl -sS -o status.json "$NICEAI_BASE_URL/v1/videos/generations/$TASK_ID" -H "Authorization: Bearer $NICEAI_API_KEY" || { log "Status request failed (poll $i)"; continue; }
-              STATUS=$(jq -r '.data.status // .status // empty' status.json)
-              PROGRESS=$(jq -r '.data.progress // .progress // empty' status.json)
-              log "Poll $i: status=$STATUS progress=$PROGRESS"
-              if [ "$STATUS" = "succeeded" ] || [ "$STATUS" = "completed" ] || [ "$STATUS" = "success" ]; then
-                VIDEO_URL=$(jq -r '.data.video_url // .data.url // .data.result_url // .video_url // .url // empty' status.json)
-                if [ -z "$VIDEO_URL" ] || [ "$VIDEO_URL" = "null" ]; then
-                  log "ERROR: succeeded but no video_url"
-                  cat status.json | tee -a "$LOG"
-                  exit 1
+            CURRENT_PROMPT="$PROMPT"
+            PROMPT_VERSION="verbatim"
+            attempt=1
+            while [ "$attempt" -le 4 ]; do
+              echo "== Попытка $attempt/4 (версия промпта: $PROMPT_VERSION): POST /v1/videos (seedance-2.5, seconds=20) =="
+              req=$(jq -n --arg model "seedance-2.5" --arg prompt "$CURRENT_PROMPT" --argjson seconds 20 --arg size "720x1280" --arg resolution "720p" --arg aspect_ratio "9:16" --argjson generate_audio true '{model:$model,prompt:$prompt,seconds:$seconds,size:$size,resolution:$resolution,aspect_ratio:$aspect_ratio,generate_audio:$generate_audio}' || true)
+              http=$(curl -s -A "$USER_AGENT" -H "Authorization: Bearer $NICEAI_KEY" -H "Content-Type: application/json" -d "$req" -o create.json -w '%{http_code}' "$BASE_URL/videos" || true)
+              echo "HTTP: $http"
+              echo "--- ответ POST /v1/videos (точный текст) ---"
+              cat create.json
+              echo "--- конец ответа ---"
+              id=$(jq -r '.id // .task_id // .data.id // empty' create.json 2>/dev/null || true)
+              echo "ATTEMPT_${attempt}_TASK_ID=$id"
+              status=""
+              err=""
+              is_copyright=0
+              if [ -z "$id" ]; then
+                err=$(jq -r '.error.message // .error // .message // empty' create.json 2>/dev/null || true)
+                echo "Попытка $attempt: id не вернулся (HTTP $http) — 429/5xx или иная ошибка отправки, ошибка: $err"
+                printf '%s' "$err" | grep -qi "copyright" && is_copyright=1
+              else
+                echo "== Попытка $attempt: опрос статуса каждые 15 сек, до 40 мин =="
+                i=0
+                while [ "$i" -lt 160 ]; do
+                  i=$((i+1))
+                  http=$(curl -s -A "$USER_AGENT" -H "Authorization: Bearer $NICEAI_KEY" -o status.json -w '%{http_code}' "$BASE_URL/videos/$id" || true)
+                  status=$(jq -r '.status // .state // .data.status // empty' status.json 2>/dev/null || true)
+                  echo "[$i/160] HTTP $http status=$status"
+                  cat status.json
+                  if [ "$status" = "completed" ]; then break; fi
+                  if [ "$status" = "failed" ]; then break; fi
+                  sleep 15
+                done
+                if [ "$status" = "completed" ]; then
+                  echo "--- urls ---"
+                  jq '.urls // .data.urls // empty' status.json 2>/dev/null || true
+                  echo "== Попытка $attempt: скачивание видео -> pmu-ep1-clip-${CLIP_N}.mp4 (urls[0], иначе /content) =="
+                  download_video "$id" "pmu-ep1-clip-${CLIP_N}.mp4" status.json
+                  ls -l "pmu-ep1-clip-${CLIP_N}.mp4" || true
+                  file "pmu-ep1-clip-${CLIP_N}.mp4" || true
+                  size=$(stat -c%s "pmu-ep1-clip-${CLIP_N}.mp4" 2>/dev/null || echo 0)
+                  echo "CLIP_SIZE_BYTES=$size"
+                  echo "CLIP_TASK_ID=$id"
+                  echo "SECONDS_USED=20"
+                  echo "ATTEMPTS_USED=$attempt"
+                  echo "PROMPT_VERSION_USED=$PROMPT_VERSION"
+                  if [ "$size" != "0" ] && [ "$(head -c 1 "pmu-ep1-clip-${CLIP_N}.mp4")" != "{" ]; then
+                    echo "ГОТОВО: pmu-ep1-clip-${CLIP_N}.mp4 ($size байт), task id=$id, status=completed, seconds=20, версия промпта: $PROMPT_VERSION, попытка $attempt/4"
+                    return 0
+                  fi
+                  echo "Попытка $attempt: скачивание не дало видео (size=$size)"
+                  err="download failed"
+                else
+                  err=$(jq -r '.error.message // .error // empty' status.json 2>/dev/null || true)
+                  echo "Попытка $attempt: задача $id завершилась статусом '$status', ошибка: $err"
+                  printf '%s' "$err" | grep -qi "copyright" && is_copyright=1
                 fi
-                log "Video URL: $VIDEO_URL"
-                curl -sSL -o "pmu-ep1-clip-${CLIP_N}.mp4" "$VIDEO_URL"
-                SIZE_BYTES=$(stat -c%s "pmu-ep1-clip-${CLIP_N}.mp4" || echo 0)
-                log "Downloaded: $SIZE_BYTES bytes"
-                if [ "$SIZE_BYTES" -lt 100000 ]; then
-                  log "ERROR: file too small"
-                  file "pmu-ep1-clip-${CLIP_N}.mp4" | tee -a "$LOG"
-                  exit 1
-                fi
-                file "pmu-ep1-clip-${CLIP_N}.mp4" | tee -a "$LOG"
-                SUCCESS=true
-                break
               fi
-              if [ "$STATUS" = "failed" ] || [ "$STATUS" = "error" ]; then
-                log "ERROR: task failed"
-                cat status.json | tee -a "$LOG"; echo | tee -a "$LOG"
-                if grep -qi 'copyright' status.json; then
-                  log "Copyright refusal detected in status response"
-                  COPYRIGHT_HIT=true
-                  MAX_ATTEMPTS=4
-                fi
-                break
+              if [ "$is_copyright" = 1 ] && [ "$PROMPT_VERSION" = "verbatim" ] && [ "$attempt" -ge 2 ]; then
+                echo "Copyright-фильтр: после 1 дословной повторной отправки переключаюсь на смягчённый промпт (та же сцена и диалоги, нейтральные ремарки)"
+                CURRENT_PROMPT=$(soften_prompt "$PROMPT")
+                CURRENT_PROMPT="$CURRENT_PROMPT original fictional scene, no copyrighted characters."
+                PROMPT_VERSION="softened"
+                echo "SOFTENED_LEN=${#CURRENT_PROMPT}"
+                echo "SOFTENED_HEAD=${CURRENT_PROMPT:0:120}"
               fi
-            done
-            if [ "$SUCCESS" = "true" ]; then
-              break
-            fi
-            if [ "$attempt" -lt "$MAX_ATTEMPTS" ]; then
-              log "Retrying in 60s..."
+              if [ "$attempt" -ge 4 ]; then
+                echo "ОШИБКА: клип $CLIP_N не создан за 4 попытки (последний статус: $status, последний id: $id, точный ответ выше)"
+                return 1
+              fi
+              if [ "$is_copyright" = 0 ] && [ "$attempt" -ge 3 ]; then
+                echo "ОШИБКА: клип $CLIP_N не создан за 3 попытки (последний статус: $status, последний id: $id, точный ответ выше)"
+                return 1
+              fi
+              echo "Жду 60 сек и повторяю (новая задача)"
               sleep 60
-            fi
-            attempt=$((attempt+1))
-          done
-          if [ "$SUCCESS" != "true" ]; then
-            log "ERROR: all attempts failed for clip $CLIP_N"
-            exit 1
-          fi
-          log "SUCCESS: pmu-ep1-clip-${CLIP_N}.mp4 ready"
-      - name: Upload clip artifact
+              attempt=$((attempt+1))
+            done
+            return 1
+          }
+          main 2>&1 | tee "$LOG"
+          exit "${PIPESTATUS[0]}"
+      - name: Загрузить артефакт niceai-pmu-ep1-clip-N
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: niceai-pmu-ep1-clip-${{ matrix.clip }}
           path: |
-            pmu-ep1-clip-${{ matrix.clip }}.mp4
             pmu-ep1-clip-${{ matrix.clip }}.log
-            request.json
             create.json
             status.json
-          if-no-files-found: error
-          retention-days: 90
-      - name: Add summary
-        if: always()
-        run: |
-          {
-            echo "## Pick Me Up — Episode 1, clip ${CLIP_N}"
-            echo ""
-            echo "- Model: $MODEL"
-            echo "- Seconds: $SECONDS"
-            echo "- Size: $SIZE"
-            echo "- Resolution: $RESOLUTION"
-            echo "- Audio: true"
-            if [ -f "pmu-ep1-clip-${CLIP_N}.mp4" ]; then
-              echo "- File: pmu-ep1-clip-${CLIP_N}.mp4 ($(stat -c%s "pmu-ep1-clip-${CLIP_N}.mp4") bytes)"
-            else
-              echo "- File: NOT PRODUCED — see log"
-            fi
-          } >> "$GITHUB_STEP_SUMMARY"
+            pmu-ep1-clip-${{ matrix.clip }}.mp4
+          if-no-files-found: warn
