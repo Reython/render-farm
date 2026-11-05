@@ -1,0 +1,115 @@
+name: render
+
+on:
+  workflow_dispatch:
+    inputs:
+      comp:
+        description: "Remotion composition id"
+        required: true
+        default: "EgyptShort"
+        type: string
+      ranges:
+        description: "Comma-separated frame ranges, e.g. 0-59,60-119,120-179 (each range = one chunk, max 60 frames)"
+        required: true
+        type: string
+      postjson:
+        description: "inputProps JSON passed to the composition"
+        required: false
+        default: '{"post":{"dpr":0.5,"msaa":0}}'
+        type: string
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.parse.outputs.matrix }}
+    steps:
+      - id: parse
+        name: Parse ranges into a matrix
+        env:
+          RANGES: ${{ inputs.ranges }}
+        run: |
+          python3 - <<'EOF'
+          import json, os, re, sys
+          raw = os.environ["RANGES"]
+          items = []
+          for part in raw.split(","):
+              part = part.strip()
+              if not part:
+                  continue
+              m = re.fullmatch(r"(\d+)-(\d+)", part)
+              if not m:
+                  sys.exit(f"bad range: {part!r} (want START-END)")
+              start, end = int(m.group(1)), int(m.group(2))
+              if end < start:
+                  sys.exit(f"bad range: {part!r} (end < start)")
+              if end - start + 1 > 60:
+                  sys.exit(f"range {part!r} is longer than 60 frames")
+              items.append({"start": start, "end": end})
+          if not items:
+              sys.exit("no ranges given")
+          with open(os.environ["GITHUB_OUTPUT"], "a") as fh:
+              fh.write("matrix=" + json.dumps({"include": items}) + "\n")
+          print(f"{len(items)} chunk(s) queued")
+          EOF
+
+  render:
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      max-parallel: 10
+      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+    env:
+      START: ${{ matrix.start }}
+      END: ${{ matrix.end }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Install Google Chrome and ffmpeg
+        run: |
+          wget -q https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+          sudo apt-get update
+          sudo apt-get install -y ./google-chrome-stable_current_amd64.deb ffmpeg
+          google-chrome --version
+          ffprobe -version | head -1
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Render chunk ${{ matrix.start }}-${{ matrix.end }}
+        env:
+          A: ${{ matrix.start }}
+          B: ${{ matrix.end }}
+          COMP: ${{ inputs.comp }}
+          POSTJSON: ${{ inputs.postjson }}
+          GL: swangle
+          CONC: "4"
+        run: |
+          export BROWSER_EXE="$(which google-chrome)"
+          export OUT="out/chunks/$(printf 'p%04d.mp4' "$A")"
+          echo "rendering frames $A-$B -> $OUT with $BROWSER_EXE"
+          timeout 1500 node scripts/render-chunk.mjs
+
+      - name: Verify chunk frame count
+        run: |
+          OUT="out/chunks/$(printf 'p%04d.mp4' "$START")"
+          WANT=$((END - START + 1))
+          GOT="$(ffprobe -v error -count_frames -select_streams v:0 -show_entries stream=nb_read_frames -of csv=p=0 "$OUT")"
+          echo "frames: got=$GOT want=$WANT ($OUT)"
+          if [ "$GOT" != "$WANT" ]; then
+            echo "::error::chunk $OUT has $GOT frames, expected $WANT"
+            exit 1
+          fi
+
+      - name: Upload chunk artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: chunk-${{ matrix.start }}-${{ matrix.end }}
+          path: out/chunks/p*.mp4
+          if-no-files-found: error
