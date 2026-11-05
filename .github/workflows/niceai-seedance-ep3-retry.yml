@@ -1,0 +1,176 @@
+name: NiceAI Seedance 2.5 — Episode 3 retry (clips 4, 8)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  gen:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        clip: [4, 8]
+    env:
+      CLIP: ${{ matrix.clip }}
+      NICEAI_KEY: ${{ secrets.NICEAI_KEY }}
+    steps:
+      - name: Checkout репозитория (EPISODE3_SCRIPT.md)
+        uses: actions/checkout@v4
+      - name: Генерация клипа (до 4 попыток, fallback при copyright-фильтре, опрос, скачивание)
+        run: |
+          set -o pipefail
+          set +e
+          SCRIPT="EPISODE3_SCRIPT.md"
+          LOG="ep3-clip-${CLIP}.log"
+          MP4="ep3-clip-${CLIP}.mp4"
+          API="https://api.niceai.rest/v1"
+          UA="Mozilla/5.0"
+
+          extract_prompt() {
+            awk -v clip="$CLIP" '
+              $0 ~ "^## CLIP " clip " " { found=1; next }
+              found && /^\*\*Seedance Prompt:\*\*/ { in_prompt=1; next }
+              in_prompt && (/^$/ || /^\*\*/ || /^## /) { exit }
+              in_prompt { print }
+            ' "$SCRIPT" | tr '\n' ' ' | sed -e 's/  */ /g' -e 's/^ *//' -e 's/ *$//'
+          }
+
+          soften_prompt() {
+            printf '%s' "$1" | sed \
+              -e 's/\bdivorce papers\b/documents/gI' \
+              -e 's/\bdivorced\b/separated/gI' \
+              -e 's/\bdivorcing\b/separating/gI' \
+              -e 's/\bdivorce\b/separation/gI' \
+              -e 's/\bthrows\b/places/gI' \
+              -e 's/\bthrow\b/place/gI' \
+              -e 's/\bshouts\b/says firmly/gI' \
+              -e 's/\bshout\b/say firmly/gI' \
+              -e 's/\bscreaming\b/speaking firmly/gI' \
+              -e 's/\bscreams\b/says firmly/gI' \
+              -e 's/\bscream\b/say firmly/gI' \
+              -e 's/\bhumiliates\b/embarrasses/gI' \
+              -e 's/\bhumiliate\b/embarrass/gI' \
+              -e 's/\bhumiliating\b/embarrassing/gI' \
+              -e 's/\bslaps\b/touches/gI' \
+              -e 's/\bslap\b/touch/gI'
+            printf ' original fictional scene, no copyrighted characters.'
+          }
+
+          main() {
+            local prompt_verbatim prompt_len prompt_head current_prompt prompt_version
+            prompt_verbatim="$(extract_prompt)"
+            prompt_len="$(printf '%s' "$prompt_verbatim" | wc -c)"
+            prompt_head="$(printf '%s' "$prompt_verbatim" | head -c 80)"
+            echo "PROMPT_LEN=$prompt_len"
+            echo "PROMPT_HEAD=$prompt_head"
+            if [ "$prompt_len" -lt 200 ]; then
+              echo "ОШИБКА: промпт клипа $CLIP слишком короткий ($prompt_len)"
+              return 1
+            fi
+
+            if [ "$CLIP" = "4" ]; then
+              current_prompt="$(soften_prompt "$prompt_verbatim")"
+              prompt_version="softened"
+              echo "Клип 4: сразу смягчённый промпт (ранее дважды падал дословно)"
+              echo "SOFTENED_LEN=$(printf '%s' "$current_prompt" | wc -c)"
+              echo "SOFTENED_HEAD=$(printf '%s' "$current_prompt" | head -c 80)"
+            else
+              current_prompt="$prompt_verbatim"
+              prompt_version="verbatim"
+            fi
+
+            local attempt=1 last_status="" last_id="" last_error=""
+            while [ "$attempt" -le 4 ]; do
+              echo "Попытка $attempt: отправляю $prompt_version промпт (длина $(printf '%s' "$current_prompt" | wc -c))"
+              local body resp http json id
+              body="$(jq -n --arg prompt "$current_prompt" '{model:"seedance-2.5", prompt:$prompt, seconds:20, size:"720x1280", resolution:"720p", aspect_ratio:"9:16", generate_audio:true}')"
+              resp="$(curl -s -w "\n%{http_code}" -X POST "$API/videos" -H "Authorization: Bearer $NICEAI_KEY" -H "Content-Type: application/json" -H "User-Agent: $UA" -d "$body")"
+              http="${resp##*$'\n'}"
+              json="${resp%$'\n'*}"
+              echo "$json"
+              if [ "$http" != "200" ] && [ "$http" != "201" ]; then
+                echo "Попытка $attempt: отправка не удалась, HTTP $http, жду 60 с"
+                sleep 60
+                attempt=$((attempt + 1))
+                continue
+              fi
+              id="$(printf '%s' "$json" | jq -r '.id // empty')"
+              if [ -z "$id" ]; then
+                echo "Попытка $attempt: в ответе нет id, жду 60 с"
+                sleep 60
+                attempt=$((attempt + 1))
+                continue
+              fi
+              echo "id задачи: $id"
+              last_id="$id"
+              local n=1 status="" poll_resp poll_http poll_json
+              while [ "$n" -le 160 ]; do
+                poll_resp="$(curl -s -w "\n%{http_code}" "$API/videos/$id" -H "Authorization: Bearer $NICEAI_KEY" -H "User-Agent: $UA")"
+                poll_http="${poll_resp##*$'\n'}"
+                poll_json="${poll_resp%$'\n'*}"
+                status="$(printf '%s' "$poll_json" | jq -r '.status // empty')"
+                echo "$poll_json"
+                echo "[$n/160] HTTP $poll_http status=$status"
+                if [ "$status" = "completed" ] || [ "$status" = "failed" ]; then
+                  break
+                fi
+                sleep 15
+                n=$((n + 1))
+              done
+              last_status="$status"
+              if [ "$status" = "completed" ]; then
+                local url size
+                url="$(printf '%s' "$poll_json" | jq -r '.urls[0] // empty')"
+                if [ -n "$url" ]; then
+                  curl -s -L -o "$MP4" -H "User-Agent: $UA" "$url"
+                else
+                  curl -s -L -o "$MP4" -H "Authorization: Bearer $NICEAI_KEY" -H "User-Agent: $UA" "$API/videos/$id/content"
+                fi
+                if [ -s "$MP4" ]; then
+                  size="$(stat -c%s "$MP4")"
+                  echo "ГОТОВО: клип $CLIP создан, файл $MP4, размер $size байт"
+                  echo "PROMPT_VERSION_USED=$prompt_version"
+                  echo "ATTEMPTS_USED=$attempt"
+                  return 0
+                fi
+                echo "Попытка $attempt: скачивание не удалось (файл пустой), жду 60 с"
+                sleep 60
+                attempt=$((attempt + 1))
+                continue
+              fi
+              if [ "$status" != "failed" ]; then
+                echo "Попытка $attempt: опрос превысил 40 минут, последний статус: $status"
+              else
+                last_error="$(printf '%s' "$poll_json" | jq -r '.error.message // empty')"
+                echo "Попытка $attempt: задача $id завершилась статусом 'failed', ошибка: $last_error"
+                if printf '%s' "$last_error" | grep -qi 'copyright' && [ "$prompt_version" = "verbatim" ] && [ "$attempt" -ge 2 ]; then
+                  current_prompt="$(soften_prompt "$prompt_verbatim")"
+                  prompt_version="softened"
+                  echo "Copyright-фильтр: после 1 дословной повторной отправки переключаюсь на смягчённый промпт"
+                  echo "SOFTENED_LEN=$(printf '%s' "$current_prompt" | wc -c)"
+                  echo "SOFTENED_HEAD=$(printf '%s' "$current_prompt" | head -c 80)"
+                fi
+              fi
+              if [ "$attempt" -lt 4 ]; then
+                echo "Жду 60 с перед следующей попыткой"
+                sleep 60
+              fi
+              attempt=$((attempt + 1))
+            done
+            echo "ОШИБКА: клип $CLIP не создан за 4 попытки (последний статус: $last_status, последний id: $last_id, точный ответ выше)"
+            return 1
+          }
+
+          main 2>&1 | tee "$LOG"
+          exit "${PIPESTATUS[0]}"
+      - name: Загрузить артефакт niceai-ep3-clip-N
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: niceai-ep3-clip-${{ matrix.clip }}
+          path: |
+            ep3-clip-${{ matrix.clip }}.mp4
+            ep3-clip-${{ matrix.clip }}.log
+          if-no-files-found: warn
