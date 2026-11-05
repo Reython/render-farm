@@ -223,6 +223,7 @@ export const POSES = {
   spideyWave: { armR: [150, 24], armL: [-24, -14], legL: [-10, 4], legR: [10, -4] } as Joints,
   spideyCatch: { crouch: 0.55, armR: [160, 10], armL: [-12, -8], legL: [-30, 40], legR: [26, 34], headTilt: -8 } as Joints,
   spideyFacepalm: { armR: [128, 118], armL: [-16, -10], legL: [-7, 2], legR: [7, -2], headTilt: 10 } as Joints,
+  spideyTired: { lean: 5, armR: [24, 4], armL: [-24, -4], legL: [-6, 2], legR: [6, -2], headTilt: 15 } as Joints,
   spideyNod: { armR: [20, 10], armL: [-20, -10], legL: [-7, 2], legR: [7, -2], headTilt: 7 } as Joints,
   stand: { armR: [16, 8], armL: [-16, -8], legL: [-7, 2], legR: [7, -2] } as Joints,
   point: { armR: [88, 4], armL: [-16, -8], legL: [-7, 2], legR: [7, -2], headTilt: -3 } as Joints,
