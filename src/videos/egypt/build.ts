@@ -445,6 +445,11 @@ export const buildEgypt = (parent: THREE.Object3D, M: EgyptMats) => {
   // side retaining cheeks of the ramp
   b.add(boxGeo(V(R.x - R.w / 2 - 1.2, 0, R.topZ - 2), V(R.x - R.w / 2, 9, R.botZ), 5), M.mudbrick);
   b.add(boxGeo(V(R.x + R.w / 2, 0, R.topZ - 2), V(R.x + R.w / 2 + 1.2, 9, R.botZ), 5), M.mudbrick);
+  // timber anchor frame at the ramp head: the restraint rope ties to its crossbeam
+  // (crossbeam centre = the rope anchor point (R.x, 32.4, -14.5) used in world.ts)
+  b.add(boxGeo(V(R.x - 3.4, 26.5, -14.9), V(R.x - 2.9, 32.6, -14.4), 2), M.wood);
+  b.add(boxGeo(V(R.x + 2.9, 26.5, -14.9), V(R.x + 3.4, 32.6, -14.4), 2), M.wood);
+  b.add(boxGeo(V(R.x - 3.6, 32.15, -15), V(R.x + 3.6, 32.65, -14), 2), M.wood);
   // temple: platform, twin pylons with a gate gap, column hall behind
   const T = SITE.temple;
   b.add(boxGeo(V(T.x - 17, 0, T.z - 13), V(T.x + 17, 1.6, T.z + 13), 6), M.sandstone);
@@ -475,6 +480,46 @@ export const buildEgypt = (parent: THREE.Object3D, M: EgyptMats) => {
     b.add(pole, M.wood);
   }
   b.add(boxGeo(V(D.x - 6.4, 5.7, D.z - 4.4), V(D.x + 6.4, 6.05, D.z + 4.4), 3), M.reed);
+  // hieroglyph banner behind the throne (raised above the throne back): an instant Egypt marker in every dais shot
+  {
+    const C = { x: 14.8, z: -8.6 }, Y = 4.65, RY = Math.PI / 4;
+    const ux = Math.cos(RY), uz = -Math.sin(RY); // band axis (NE)
+    const nx = Math.sin(RY), nz = Math.cos(RY); // band normal (SE, toward the dais cameras)
+    const bandM = lam("egBand", () => ({ color: "#6e452a" }));
+    const goldM = lam("egGlyphGold", () => ({ color: "#d9a83c" }));
+    const lapisM = lam("egGlyphLapis", () => ({ color: "#2c4a8a" }));
+    const turqM = lam("egGlyphTurq", () => ({ color: "#3f8f7a" }));
+    const boneM = lam("egGlyphBone", () => ({ color: "#e8e0cc" }));
+    const blkM = lam("egGlyphBlk", () => ({ color: "#26221e" }));
+    for (const s of [-3.5, 3.5]) {
+      const px = C.x + ux * s, pz = C.z + uz * s;
+      const pole = new THREE.CylinderGeometry(0.09, 0.11, 5.4, 7); pole.translate(px, 2.7, pz);
+      b.add(pole, M.wood);
+      const fin = new THREE.SphereGeometry(0.16, 10, 8); fin.translate(px, 5.5, pz);
+      b.add(fin, goldM);
+    }
+    const band = new THREE.BoxGeometry(7.6, 1.2, 0.12); band.rotateY(RY); band.translate(C.x, Y, C.z);
+    b.add(band, bandM);
+    const put = (geo: THREE.BufferGeometry, mat: any, lx: number, dy = 0) => {
+      geo.rotateY(RY); geo.translate(C.x + ux * lx + nx * 0.1, Y + dy, C.z + uz * lx + nz * 0.1);
+      b.add(geo, mat);
+    };
+    const disc = (r: number) => { const d = new THREE.CylinderGeometry(r, r, 0.07, 18); d.rotateX(Math.PI / 2); return d; };
+    const bar = (w: number, h: number, rz = 0) => { const g2 = new THREE.BoxGeometry(w, h, 0.07); if (rz) g2.rotateZ(rz); return g2; };
+    put(disc(0.27), goldM, -2.85); // sun disc
+    for (let rI = 0; rI < 3; rI++) for (let sI = 0; sI < 3; sI++) { // water zigzags
+      const seg = bar(0.24, 0.07, (sI % 2 ? -1 : 1) * 0.5); seg.translate(-0.24 + sI * 0.24, -0.16 + rI * 0.16, 0);
+      put(seg, turqM, -1.9);
+    }
+    { const eye = disc(0.28); eye.scale(1.45, 1, 1); put(eye, boneM, -0.95); put(disc(0.13), blkM, -0.95); // eye
+      const brow = bar(0.62, 0.08, -0.12); brow.translate(0, 0.3, 0.01); put(brow, blkM, -0.95); }
+    { const stem = bar(0.09, 0.55); stem.translate(0, -0.08, 0); put(stem, turqM, 0); // reed
+      const leaf = new THREE.ConeGeometry(0.14, 0.34, 8); leaf.translate(0, 0.36, 0); put(leaf, turqM, 0); }
+    for (const a of [0, Math.PI / 3, -Math.PI / 3]) put(bar(0.58, 0.09, a), goldM, 0.95); // star
+    { const body = new THREE.SphereGeometry(0.27, 12, 10); body.scale(1, 0.78, 0.4); put(body, lapisM, 1.9); // scarab
+      const hd = disc(0.11); hd.translate(0, 0.3, 0); put(hd, lapisM, 1.9); }
+    { put(bar(0.15, 0.6), goldM, 2.85); const rib = bar(0.04, 0.6); rib.translate(0, 0, 0.045); put(rib, blkM, 2.85); } // feather
+  }
   // workers' huts, far east
   for (const [hx, hz, hw] of [[92, -58, 9], [104, -50, 7], [96, -70, 8], [110, -64, 6]] as const) {
     b.add(boxGeo(V(hx - hw / 2, 0, hz - hw / 2), V(hx + hw / 2, 3.1, hz + hw / 2), 4), M.mudbrick);
