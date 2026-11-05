@@ -1,0 +1,278 @@
+name: NiceAI Seedance 2.5 — Episode 1
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      BASE_URL: https://api.niceai.rest/v1
+      USER_AGENT: Mozilla/5.0
+      TEST_PROMPT: 'A young woman in a beige dress stands in a luxury penthouse at night, cinematic vertical drama, divorce papers on a glass table, she looks at camera shocked'
+    steps:
+      - name: Тест NiceAI — модели, задача 20 сек, опрос, скачивание
+        env:
+          NICEAI_KEY: ${{ secrets.NICEAI_KEY }}
+        run: |
+          set -u
+          LOG="test.log"
+          download_video() {
+            local vid="$1" out="$2" st="$3"
+            local dl http size
+            dl=$(jq -r '(.urls // .data.urls // empty) | if type=="array" then (.[0] // empty) else . end | if type=="object" then (.url // .href // empty) else . end' "$st" 2>/dev/null || true)
+            echo "DOWNLOAD_URL_FROM_URLS=$dl"
+            if [ -n "$dl" ] && [ "$dl" != "null" ]; then
+              http=$(curl -s -L -A "$USER_AGENT" -o "$out" -w '%{http_code}' "$dl" || true)
+              echo "Скачивание из urls[0]: HTTP $http"
+              size=$(stat -c%s "$out" 2>/dev/null || echo 0)
+              if [ "$size" != "0" ] && [ "$(head -c 1 "$out")" != "{" ]; then
+                echo "DOWNLOAD_OK_FROM_URLS size=$size"
+                return 0
+              fi
+              echo "Скачивание из urls[0] не дало видео (size=$size) — пробую /content"
+            else
+              echo "urls пуст — скачивание через /content"
+            fi
+            http=$(curl -s -A "$USER_AGENT" -H "Authorization: Bearer $NICEAI_KEY" -o "$out" -w '%{http_code}' "$BASE_URL/videos/$vid/content" || true)
+            echo "Скачивание из /content: HTTP $http"
+            return 0
+          }
+          main() {
+            echo "== Шаг 1. GET /v1/videos/models =="
+            http=$(curl -s -A "$USER_AGENT" -H "Authorization: Bearer $NICEAI_KEY" -o models.json -w '%{http_code}' "$BASE_URL/videos/models" || true)
+            echo "HTTP: $http"
+            echo "--- models.json ---"
+            cat models.json
+            echo "--- конец models.json ---"
+            if [ "$http" != "200" ]; then
+              echo "ОШИБКА: GET /v1/videos/models вернул HTTP $http"
+              return 1
+            fi
+            echo "== Шаг 2. POST /v1/videos (seedance-2.5, seconds=20) =="
+            req=$(jq -n --arg model "seedance-2.5" --arg prompt "$TEST_PROMPT" --argjson seconds 20 --arg size "720x1280" --arg resolution "720p" --arg aspect_ratio "9:16" --argjson generate_audio false '{model:$model,prompt:$prompt,seconds:$seconds,size:$size,resolution:$resolution,aspect_ratio:$aspect_ratio,generate_audio:$generate_audio}' || true)
+            http=$(curl -s -A "$USER_AGENT" -H "Authorization: Bearer $NICEAI_KEY" -H "Content-Type: application/json" -d "$req" -o create.json -w '%{http_code}' "$BASE_URL/videos" || true)
+            echo "HTTP: $http"
+            echo "--- ответ POST /v1/videos (точный текст) ---"
+            cat create.json
+            echo "--- конец ответа ---"
+            id=$(jq -r '.id // .task_id // .data.id // empty' create.json 2>/dev/null || true)
+            echo "TEST_TASK_ID=$id"
+            if [ -z "$id" ]; then
+              echo "ОШИБКА: API не вернул id задачи (точный ответ выше)"
+              return 1
+            fi
+            echo "== Шаг 3. Опрос статуса каждые 15 сек, до 20 мин =="
+            status=""
+            i=0
+            while [ "$i" -lt 80 ]; do
+              i=$((i+1))
+              http=$(curl -s -A "$USER_AGENT" -H "Authorization: Bearer $NICEAI_KEY" -o status.json -w '%{http_code}' "$BASE_URL/videos/$id" || true)
+              status=$(jq -r '.status // .state // .data.status // empty' status.json 2>/dev/null || true)
+              echo "[$i/80] HTTP $http status=$status"
+              cat status.json
+              if [ "$status" = "completed" ]; then
+                break
+              fi
+              if [ "$status" = "failed" ]; then
+                echo "ОШИБКА: задача перешла в failed"
+                return 1
+              fi
+              sleep 15
+            done
+            if [ "$status" != "completed" ]; then
+              echo "ОШИБКА: задача не completed за 20 мин (последний статус: $status)"
+              return 1
+            fi
+            echo "--- urls ---"
+            jq '.urls // .data.urls // empty' status.json 2>/dev/null || true
+            echo "== Шаг 4. Скачивание видео -> test-clip.mp4 (urls[0], иначе /content) =="
+            download_video "$id" test-clip.mp4 status.json
+            ls -l test-clip.mp4
+            file test-clip.mp4 || true
+            size=$(stat -c%s test-clip.mp4 2>/dev/null || echo 0)
+            echo "TEST_CLIP_SIZE_BYTES=$size"
+            if [ "$size" = "0" ]; then
+              echo "ОШИБКА: test-clip.mp4 пустой"
+              return 1
+            fi
+            if [ "$(head -c 1 test-clip.mp4)" = "{" ]; then
+              echo "ОШИБКА: вместо видео скачан JSON:"
+              cat test-clip.mp4
+              return 1
+            fi
+            echo "ГОТОВО: test-clip.mp4 ($size байт), task id=$id, status=completed, seconds=20"
+          }
+          main 2>&1 | tee "$LOG"
+      - name: Загрузить артефакт niceai-seedance-test
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: niceai-seedance-test
+          path: |
+            models.json
+            test.log
+            create.json
+            status.json
+            test-clip.mp4
+          if-no-files-found: warn
+
+  gen:
+    name: gen (clip ${{ matrix.clip }})
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 70
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - clip: 1
+            prompt: |-
+              Vertical 9:16, photorealistic cinematic, consistent character appearance. Luxury penthouse anniversary party at night, blurred guests in background, warm golden light. In the first 3 seconds Ethan Cole throws a stack of white papers onto a glass table in front of his wife and shouts. Characters: Ava Sterling, 28-year-old woman, fair skin, long chestnut-brown wavy hair in a low ponytail, soft natural makeup, large expressive brown eyes, slim build, wearing a simple beige knit midi dress and flat shoes, tiny silver pendant necklace, no other jewelry, consistent character appearance; Ethan Cole, 32-year-old man, light skin, short dark blond slicked-back hair, clean-shaven, sharp jawline, athletic build, wearing a charcoal designer suit with white shirt and no tie, silver luxury watch on left wrist, consistent character appearance; Chloe Hart, 27-year-old woman, fair skin, long platinum blonde hair in loose curls, heavy glam makeup with smoky eyeshadow, blue eyes, curvy build, wearing a red satin cocktail dress and gold stiletto heels, gold hoop earrings, consistent character appearance. Camera: fast push-in on Ava's shocked face, then whip to Ethan. Dialogue: Ethan says loudly "Sign the divorce papers, Ava. You're a nobody — and I'm done pretending." Ava whispers "Ethan... it's our anniversary." No readable text, documents out of focus, papers blank to camera. End on Ava's trembling hand over the blank papers, mid-breath.
+          - clip: 2
+            prompt: |-
+              Vertical 9:16, photorealistic cinematic, consistent character appearance. Same penthouse party, guests frozen and staring, blurred background. Chloe steps forward, slips her arm through Ethan's and rests her head on his shoulder, smirking at Ava. Characters: Ava Sterling, 28-year-old woman, fair skin, long chestnut-brown wavy hair in a low ponytail, soft natural makeup, large expressive brown eyes, slim build, wearing a simple beige knit midi dress and flat shoes, tiny silver pendant necklace, no other jewelry, consistent character appearance; Chloe Hart, 27-year-old woman, fair skin, long platinum blonde hair in loose curls, heavy glam makeup with smoky eyeshadow, blue eyes, curvy build, wearing a red satin cocktail dress and gold stiletto heels, gold hoop earrings, consistent character appearance; Ethan Cole, 32-year-old man, light skin, short dark blond slicked-back hair, clean-shaven, sharp jawline, athletic build, wearing a charcoal designer suit with white shirt and no tie, silver luxury watch on left wrist, consistent character appearance. Camera: slow push-in on Chloe's smirk, cut to Ava's eyes filling with tears. Dialogue: Chloe says sweetly "Three years, and he never once looked at you the way he looks at me." Ava says "How long?" Ethan says coldly "Long enough." End mid-tension on Ava staring at their joined arms.
+          - clip: 3
+            prompt: |-
+              Vertical 9:16, photorealistic cinematic, consistent character appearance. Penthouse party, Margaret steps between Ava and Ethan like a judge. Characters: Ava Sterling, 28-year-old woman, fair skin, long chestnut-brown wavy hair in a low ponytail, soft natural makeup, large expressive brown eyes, slim build, wearing a simple beige knit midi dress and flat shoes, tiny silver pendant necklace, no other jewelry, consistent character appearance; Margaret Cole, 58-year-old woman, fair skin, short silver-blonde bob haircut, pearl earrings, stern face with thin lips, elegant posture, wearing a navy blue tweed suit with gold buttons and a silk scarf, consistent character appearance; Ethan Cole, 32-year-old man, light skin, short dark blond slicked-back hair, clean-shaven, sharp jawline, athletic build, wearing a charcoal designer suit with white shirt and no tie, silver luxury watch on left wrist, consistent character appearance. Camera: low angle on Margaret, making her tower over Ava. Dialogue: Margaret says "My son built a company. You brought nothing, you own nothing, you leave with nothing." Ava says quietly "I gave him three years of my life." Margaret replies "And they were worth nothing." End on Ava flinching as guests whisper.
+          - clip: 4
+            prompt: |-
+              Vertical 9:16, photorealistic cinematic, consistent character appearance. Ava stands alone beside a three-tier anniversary cake with three lit candles, party lights blurred behind her. Ethan and Chloe watch from a distance. Characters: Ava Sterling, 28-year-old woman, fair skin, long chestnut-brown wavy hair in a low ponytail, soft natural makeup, large expressive brown eyes, slim build, wearing a simple beige knit midi dress and flat shoes, tiny silver pendant necklace, no other jewelry, consistent character appearance; Ethan Cole, 32-year-old man, light skin, short dark blond slicked-back hair, clean-shaven, sharp jawline, athletic build, wearing a charcoal designer suit with white shirt and no tie, silver luxury watch on left wrist, consistent character appearance; Chloe Hart, 27-year-old woman, fair skin, long platinum blonde hair in loose curls, heavy glam makeup with smoky eyeshadow, blue eyes, curvy build, wearing a red satin cocktail dress and gold stiletto heels, gold hoop earrings, consistent character appearance. Camera: tight close-up, candlelight on Ava's wet eyes. Dialogue: Ava whispers to herself "I hid who I was... so you'd love me for me." Ethan calls out "Stop stalling, Ava. Sign." She blows out one candle. End mid-tension: two candles still burning, her decision not made.
+          - clip: 5
+            prompt: |-
+              Vertical 9:16, photorealistic cinematic, consistent character appearance. Close scene at the glass table, blank divorce papers out of focus in foreground, no readable text. Ava picks up a pen with a shaking hand, then stops and looks up, suddenly calm. Characters: Ava Sterling, 28-year-old woman, fair skin, long chestnut-brown wavy hair in a low ponytail, soft natural makeup, large expressive brown eyes, slim build, wearing a simple beige knit midi dress and flat shoes, tiny silver pendant necklace, no other jewelry, consistent character appearance; Ethan Cole, 32-year-old man, light skin, short dark blond slicked-back hair, clean-shaven, sharp jawline, athletic build, wearing a charcoal designer suit with white shirt and no tie, silver luxury watch on left wrist, consistent character appearance; Chloe Hart, 27-year-old woman, fair skin, long platinum blonde hair in loose curls, heavy glam makeup with smoky eyeshadow, blue eyes, curvy build, wearing a red satin cocktail dress and gold stiletto heels, gold hoop earrings, consistent character appearance; Margaret Cole, 58-year-old woman, fair skin, short silver-blonde bob haircut, pearl earrings, stern face with thin lips, elegant posture, wearing a navy blue tweed suit with gold buttons and a silk scarf, consistent character appearance. Camera: extreme close-up on Ava's eyes drying, her posture straightening. Dialogue: Ava says calmly "One question, Ethan. If I walk out that door... there's no coming back. Is that what you want?" Ethan says "It's the only thing I want." End on Ava's small, dangerous smile appearing.
+    env:
+      BASE_URL: https://api.niceai.rest/v1
+      USER_AGENT: Mozilla/5.0
+      CLIP_N: ${{ matrix.clip }}
+      CLIP_PROMPT: ${{ matrix.prompt }}
+      TEST_PROMPT: 'A young woman in a beige dress stands in a luxury penthouse at night, cinematic vertical drama, divorce papers on a glass table, she looks at camera shocked'
+    steps:
+      - name: Проверка API (логика теста) и генерация клипа
+        env:
+          NICEAI_KEY: ${{ secrets.NICEAI_KEY }}
+        run: |
+          set -u
+          LOG="gen-clip-${CLIP_N}.log"
+          download_video() {
+            local vid="$1" out="$2" st="$3"
+            local dl http size
+            dl=$(jq -r '(.urls // .data.urls // empty) | if type=="array" then (.[0] // empty) else . end | if type=="object" then (.url // .href // empty) else . end' "$st" 2>/dev/null || true)
+            echo "DOWNLOAD_URL_FROM_URLS=$dl"
+            if [ -n "$dl" ] && [ "$dl" != "null" ]; then
+              http=$(curl -s -L -A "$USER_AGENT" -o "$out" -w '%{http_code}' "$dl" || true)
+              echo "Скачивание из urls[0]: HTTP $http"
+              size=$(stat -c%s "$out" 2>/dev/null || echo 0)
+              if [ "$size" != "0" ] && [ "$(head -c 1 "$out")" != "{" ]; then
+                echo "DOWNLOAD_OK_FROM_URLS size=$size"
+                return 0
+              fi
+              echo "Скачивание из urls[0] не дало видео (size=$size) — пробую /content"
+            else
+              echo "urls пуст — скачивание через /content"
+            fi
+            http=$(curl -s -A "$USER_AGENT" -H "Authorization: Bearer $NICEAI_KEY" -o "$out" -w '%{http_code}' "$BASE_URL/videos/$vid/content" || true)
+            echo "Скачивание из /content: HTTP $http"
+            return 0
+          }
+          main() {
+            echo "== Гейт: та же логика теста (модели + задача 20 сек) =="
+            http=$(curl -s -A "$USER_AGENT" -H "Authorization: Bearer $NICEAI_KEY" -o gate-models.json -w '%{http_code}' "$BASE_URL/videos/models" || true)
+            echo "GET /v1/videos/models HTTP: $http"
+            cat gate-models.json
+            if [ "$http" != "200" ]; then
+              echo "ОШИБКА ГЕЙТА: models вернул HTTP $http — досрочный выход"
+              return 1
+            fi
+            req=$(jq -n --arg model "seedance-2.5" --arg prompt "$TEST_PROMPT" --argjson seconds 20 --arg size "720x1280" --arg resolution "720p" --arg aspect_ratio "9:16" --argjson generate_audio false '{model:$model,prompt:$prompt,seconds:$seconds,size:$size,resolution:$resolution,aspect_ratio:$aspect_ratio,generate_audio:$generate_audio}' || true)
+            http=$(curl -s -A "$USER_AGENT" -H "Authorization: Bearer $NICEAI_KEY" -H "Content-Type: application/json" -d "$req" -o gate-create.json -w '%{http_code}' "$BASE_URL/videos" || true)
+            echo "POST /v1/videos (тест 20 сек) HTTP: $http"
+            cat gate-create.json
+            gate_id=$(jq -r '.id // .task_id // .data.id // empty' gate-create.json 2>/dev/null || true)
+            echo "GATE_TEST_TASK_ID=$gate_id"
+            if [ -z "$gate_id" ]; then
+              echo "ОШИБКА ГЕЙТА: тестовая задача не создана (точный ответ выше) — досрочный выход"
+              return 1
+            fi
+            echo "== Гейт: опрос тестовой задачи каждые 15 сек, до 20 мин =="
+            status=""
+            i=0
+            while [ "$i" -lt 80 ]; do
+              i=$((i+1))
+              http=$(curl -s -A "$USER_AGENT" -H "Authorization: Bearer $NICEAI_KEY" -o gate-status.json -w '%{http_code}' "$BASE_URL/videos/$gate_id" || true)
+              status=$(jq -r '.status // .state // .data.status // empty' gate-status.json 2>/dev/null || true)
+              echo "[$i/80] HTTP $http status=$status"
+              cat gate-status.json
+              if [ "$status" = "completed" ]; then break; fi
+              if [ "$status" = "failed" ]; then echo "ОШИБКА ГЕЙТА: тестовая задача failed — досрочный выход"; return 1; fi
+              sleep 15
+            done
+            if [ "$status" != "completed" ]; then
+              echo "ОШИБКА ГЕЙТА: тестовая задача не completed за 20 мин — досрочный выход"
+              return 1
+            fi
+            echo "ГЕЙТ ПРОЙДЕН: тестовая задача $gate_id completed"
+            echo "== Клип $CLIP_N: POST /v1/videos (seedance-2.5, seconds=20) =="
+            seconds=20
+            req=$(jq -n --arg model "seedance-2.5" --arg prompt "$CLIP_PROMPT" --argjson seconds "$seconds" --arg size "720x1280" --arg resolution "720p" --arg aspect_ratio "9:16" --argjson generate_audio false '{model:$model,prompt:$prompt,seconds:$seconds,size:$size,resolution:$resolution,aspect_ratio:$aspect_ratio,generate_audio:$generate_audio}' || true)
+            http=$(curl -s -A "$USER_AGENT" -H "Authorization: Bearer $NICEAI_KEY" -H "Content-Type: application/json" -d "$req" -o create.json -w '%{http_code}' "$BASE_URL/videos" || true)
+            echo "HTTP: $http"
+            echo "--- ответ POST /v1/videos (точный текст) ---"
+            cat create.json
+            echo "--- конец ответа ---"
+            id=$(jq -r '.id // .task_id // .data.id // empty' create.json 2>/dev/null || true)
+            echo "CLIP_TASK_ID=$id"
+            echo "SECONDS_USED=$seconds"
+            if [ -z "$id" ]; then
+              echo "ОШИБКА: seconds=20 отклонён для клипа $CLIP_N (точный ответ API выше)"
+              return 1
+            fi
+            echo "== Клип $CLIP_N: опрос статуса каждые 20 сек, до 40 мин =="
+            status=""
+            i=0
+            while [ "$i" -lt 120 ]; do
+              i=$((i+1))
+              http=$(curl -s -A "$USER_AGENT" -H "Authorization: Bearer $NICEAI_KEY" -o status.json -w '%{http_code}' "$BASE_URL/videos/$id" || true)
+              status=$(jq -r '.status // .state // .data.status // empty' status.json 2>/dev/null || true)
+              echo "[$i/120] HTTP $http status=$status"
+              cat status.json
+              if [ "$status" = "completed" ]; then break; fi
+              if [ "$status" = "failed" ]; then echo "ОШИБКА: задача клипа $CLIP_N failed"; return 1; fi
+              sleep 20
+            done
+            if [ "$status" != "completed" ]; then
+              echo "ОШИБКА: задача клипа $CLIP_N не completed за 40 мин (последний статус: $status)"
+              return 1
+            fi
+            echo "--- urls ---"
+            jq '.urls // .data.urls // empty' status.json 2>/dev/null || true
+            echo "== Клип $CLIP_N: скачивание видео -> clip-${CLIP_N}.mp4 (urls[0], иначе /content) =="
+            download_video "$id" "clip-${CLIP_N}.mp4" status.json
+            ls -l "clip-${CLIP_N}.mp4"
+            file "clip-${CLIP_N}.mp4" || true
+            size=$(stat -c%s "clip-${CLIP_N}.mp4" 2>/dev/null || echo 0)
+            echo "CLIP_SIZE_BYTES=$size"
+            if [ "$size" = "0" ]; then echo "ОШИБКА: clip-${CLIP_N}.mp4 пустой"; return 1; fi
+            if [ "$(head -c 1 "clip-${CLIP_N}.mp4")" = "{" ]; then echo "ОШИБКА: вместо видео скачан JSON:"; cat "clip-${CLIP_N}.mp4"; return 1; fi
+            echo "ГОТОВО: clip-${CLIP_N}.mp4 ($size байт), task id=$id, status=completed, seconds=$seconds"
+          }
+          main 2>&1 | tee "$LOG"
+      - name: Загрузить артефакт niceai-ep1-clip-N
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: niceai-ep1-clip-${{ matrix.clip }}
+          path: |
+            gen-clip-${{ matrix.clip }}.log
+            gate-models.json
+            gate-create.json
+            gate-status.json
+            create.json
+            status.json
+            clip-${{ matrix.clip }}.mp4
+          if-no-files-found: warn
