@@ -191,14 +191,14 @@ jobs:
           }
           main 2>&1 | tee "$LOG"
           exit "${PIPESTATUS[0]}"
-      - name: Загрузить артефакт niceai-${PREFIX}-clip-N
+      - name: Загрузить артефакт niceai-episode-clip-N
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: niceai-${PREFIX}-clip-${{ matrix.clip }}
+          name: niceai-${{ inputs.prefix }}-clip-${{ matrix.clip }}
           path: |
-            ${PREFIX}-clip-${{ matrix.clip }}.log
+            ${{ inputs.prefix }}-clip-${{ matrix.clip }}.log
             create.json
             status.json
-            ${PREFIX}-clip-${{ matrix.clip }}.mp4
+            ${{ inputs.prefix }}-clip-${{ matrix.clip }}.mp4
           if-no-files-found: warn
