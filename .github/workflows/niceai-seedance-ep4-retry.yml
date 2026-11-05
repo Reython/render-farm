@@ -1,4 +1,4 @@
-name: NiceAI Seedance 2.5 — Episode 4 retry (clips 8, 23)
+name: NiceAI Seedance 2.5 — Episode 4 retry (clip 26)
 
 on:
   workflow_dispatch:
@@ -11,7 +11,7 @@ jobs:
       fail-fast: false
       max-parallel: 2
       matrix:
-        clip: [8, 23]
+        clip: [26]
     env:
       CLIP: ${{ matrix.clip }}
       NICEAI_KEY: ${{ secrets.NICEAI_KEY }}
