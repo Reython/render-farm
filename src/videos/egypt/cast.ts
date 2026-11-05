@@ -256,8 +256,11 @@ export const stage = (id: number, t: number, cam: CamInfo): Stage => {
     } else {
       card(cam, out, "spidey", "stand", POSES.spideyStand, SPIDEY_HOME[0], 0, SPIDEY_HOME[2], {});
     }
-    for (let i = 0; i < 5; i++)
-      card(cam, out, "worker", i % 2 ? "point" : "stand", i % 2 ? POSES.point : POSES.stand, -26 + i * 3.4, 0, 7 + (i % 3) * 2.2, { expr: "glyphWow", scale: 0.96 });
+    // v2: pointing arms drop at f 169 (the stare settles) so the 1C reaction hold still changes
+    for (let i = 0; i < 5; i++) {
+      const pointing = i % 2 === 1 && t < 169 / FPS;
+      card(cam, out, "worker", pointing ? "point" : "stand", pointing ? POSES.point : POSES.stand, -26 + i * 3.4, 0, 7 + (i % 3) * 2.2, { expr: t >= T_LAND ? "glyphWow" : "glyph", scale: 0.96 });
+    }
     haulCrew(cam, out, t);
   }
   if (id === 2) {
@@ -270,15 +273,15 @@ export const stage = (id: number, t: number, cam: CamInfo): Stage => {
   if (id === 3) {
     haulCrew(cam, out, t);
     card(cam, out, "spidey", "nod", POSES.spideyNod, SPIDEY_HOME[0], 0, SPIDEY_HOME[2], {});
-    dais(cam, out, t, lt > 4.4 ? "armsWide" : "stand", lt > 4.4 ? POSES.armsWide : POSES.stand);
+    dais(cam, out, t, lt > 3.33 ? "armsWide" : "stand", lt > 3.33 ? POSES.armsWide : POSES.stand); // v2 80 s: arms wide at the last phrase of beat 3
   }
   if (id === 4) {
-    const scan = q(Math.sin(t * 1.25), 8);
-    const pose: Joints = lt < 3.1 ? { ...POSES.stand, headTilt: scan * 9 } : POSES.spideyStand;
+    const scan = q(Math.sin(t * 1.25), 4); // v2: coarser steps — the head search reads as discrete snaps, not a drift
+    const pose: Joints = lt < 4.26 ? { ...POSES.stand, headTilt: scan * 9 } : POSES.spideyStand; // v2 80 s: scan until "and swings"
     card(cam, out, "spidey", lt < 3.1 ? `scan${scan}` : "stand", pose, SPIDEY_HOME[0], 0, SPIDEY_HOME[2], {});
     haulCrew(cam, out, t);
     for (let i = 0; i < 3; i++)
-      card(cam, out, "worker", lt > 3.4 ? "point" : "stand", lt > 3.4 ? POSES.point : POSES.stand, -14 + i * 3.2, 0, 9 + i * 1.4, { scale: 0.96 });
+      card(cam, out, "worker", lt > 4.0 ? "point" : "stand", lt > 4.0 ? POSES.point : POSES.stand, -14 + i * 3.2, 0, 9 + i * 1.4, { scale: 0.96 });
   }
   if (id === 5) {
     if (t < T_PALM_DUMP) {
@@ -292,7 +295,7 @@ export const stage = (id: number, t: number, cam: CamInfo): Stage => {
       card(cam, out, "spidey", "flat", { ...POSES.stand, headTilt: 9 }, -11.5, 0, 5.2, {});
     }
     for (let i = 0; i < 3; i++)
-      card(cam, out, "worker", i === 1 ? "point" : "stand", i === 1 ? POSES.point : POSES.stand, -16 + i * 4.5, 0, 11 + i, { expr: "glyphWow", scale: 0.96 });
+      card(cam, out, "worker", i === 1 ? "point" : "stand", i === 1 ? POSES.point : POSES.stand, -16 + i * 4.5, 0, 11 + i, { expr: t >= T_PALM_DUMP ? "glyphWow" : "glyph", scale: 0.96 });
   }
   if (id === 6) {
     if (t > T_SWING0 - 0.7 && t < T_SWING1 + 0.3) {
@@ -305,17 +308,19 @@ export const stage = (id: number, t: number, cam: CamInfo): Stage => {
       card(cam, out, "spidey", "stand", POSES.spideyStand, SPIDEY_HOME[0], 0, SPIDEY_HOME[2], {});
     }
     for (let i = 0; i < 7; i++)
-      card(cam, out, "worker", "point", POSES.point, 18 + i * 3.6, 0, 13 + (i % 3) * 2.4, { expr: "glyphWow", scale: 0.95 });
+      card(cam, out, "worker", "point", POSES.point, 18 + i * 3.6, 0, 13 + (i % 3) * 2.4, { expr: t >= T_SWING0 ? "glyphWow" : "glyph", scale: 0.95 });
     dais(cam, out, t, "stand", POSES.stand);
   }
   if (id === 7) {
+    // v2 face snap: calm glyphs until "…in a spider mask" (f 1276), then wow + kneelers drop together
+    const awed = t >= 1079 / FPS; // v2 80 s: awe swap inside beat 7 (frame 1079)
     for (let i = 0; i < 5; i++) {
-      const kneel = i === 1 || i === 3;
+      const kneel = awed && (i === 1 || i === 3);
       card(cam, out, "worker", kneel ? "kneel" : "stand", kneel ? POSES.kneel : POSES.stand, -19 + i * 2.6, 0, -1 + (i % 2) * 1.6,
-        { expr: "glyphWow", scale: 0.97 });
+        { expr: awed ? "glyphWow" : "glyph", scale: 0.97 });
     }
     card(cam, out, "spidey", "stand", { ...POSES.stand, headTilt: 5 }, SPIDEY_HOME[0], 0, SPIDEY_HOME[2], {});
-    dais(cam, out, t, lt > 2.6 ? "armsWide" : "stand", lt > 2.6 ? POSES.armsWide : POSES.stand);
+    dais(cam, out, t, lt > 2.9 ? "armsWide" : "stand", lt > 2.9 ? POSES.armsWide : POSES.stand); // v2 80 s: rise just after the awe swap
   }
   if (id === 8) {
     const scatter = t > T_SNAP + 0.8 ? 1 : 0;
@@ -332,7 +337,7 @@ export const stage = (id: number, t: number, cam: CamInfo): Stage => {
       if (t >= T_STOP) dust(out, -38, rampY(blockPos(0.96)[2]) + 0.5, blockPos(0.96)[2] + 2.8, (t - T_STOP) / 0.6, 1.8);
     }
     for (let i = 0; i < 3; i++)
-      card(cam, out, "worker", scatter ? "kneel" : "stand", scatter ? POSES.kneel : POSES.stand, -44 + i * 2.4, 0, 13.5 + i, { expr: "glyphWow", scale: 0.95 });
+      card(cam, out, "worker", scatter ? "kneel" : "stand", scatter ? POSES.kneel : POSES.stand, -44 + i * 2.4, 0, 13.5 + i, { expr: t >= T_SNAP ? "glyphWow" : "glyph", scale: 0.95 });
   }
   if (id === 9) {
     dais(cam, out, t, "clap", POSES.clap, { cheer: true });
@@ -342,26 +347,44 @@ export const stage = (id: number, t: number, cam: CamInfo): Stage => {
     card(cam, out, "spidey", "wave", POSES.spideyWave, 18.8, 1.62 + bobY, 2.2, {});
   }
   if (id === 10) {
-    card(cam, out, "spidey", "god", { ...POSES.stand, headTilt: -4 }, 17.5, 1.7, -1.5, {});
+    // v2: tired slump swap at "gods do not get to go home"; priest row shifted off the old camera axis (B7)
+    const tired = lt > 2.74; // v2 80 s: slump at "gods do not get to go home" (shot-10 local)
+    card(cam, out, "spidey", tired ? "tired" : "god", tired ? POSES.spideyTired : { ...POSES.stand, headTilt: -4 }, 17.5, 1.7, -1.5, {});
     out.fx.push({ key: "amulet", cw: 128, ch: 128, draw: (p) => { p.ell(64, 64, 40, 40, "#E3A81C", 7); p.ell(64, 64, 13, 20, "#14100C", 0); }, x: 17.5, y: 3.05, z: -1.2, w: 0.34, h: 0.34 });
     for (let i = 0; i < 5; i++)
-      card(cam, out, "priest", "bow", POSES.bow, 11.5 + i * 3.1, 0, 3.5 - Math.abs(i - 2) * 0.7, { scale: 0.98 });
+      card(cam, out, "priest", "bow", POSES.bow, 10.5 + i * 3.1, 0, 1.2 - Math.abs(i - 2) * 0.5, { scale: 0.98 });
     dais(cam, out, t, "armsWide", POSES.armsWide);
   }
   if (id === 11) {
-    if (lt < 4.6) {
+    if (lt < 3.4) { // v2 80 s: platform group only while the platform cameras run
       card(cam, out, "pharaoh", "point", { ...POSES.point, armR: [64, 12] }, 20.4, 1.7, -4, { scale: 1.07 });
       card(cam, out, "spidey", "nod", POSES.spideyNod, 17.2, 1.7, -3.4, {});
       card(cam, out, "guard", "stand", POSES.stand, 22.8, 1.7, -2.6, { gear: true });
     }
     for (let i = 0; i < 3; i++)
       card(cam, out, "worker", "stand", POSES.stand, -44 + i * 4.5, 52.2, -47 + i * 2, { scale: 0.92, blob: false });
+    // v2: during the fact beat (lt >= 4.94) the base cuts need crews at the pyramid foot for scale
+    if (lt >= 3.4) { // v2 80 s: base crews from the first pyramid cut
+      haulCrew(cam, out, t);
+      for (let i = 0; i < 2; i++) card(cam, out, "worker", "stand", POSES.stand, -18 + i * 5, 0, 4 + i * 2, { scale: 0.95 });
+    }
   }
   if (id === 12) {
     card(cam, out, "pharaoh", "sketch", { ...POSES.point, armR: [52, 18], headTilt: 10 }, 19.6, 1.7, -3.6, { scale: 1.07 });
     card(cam, out, "spidey", "nod", POSES.spideyNod, 16.4, 1.7, -2.8, {});
-    card(cam, out, "worker", "kneel", POSES.kneel, 13.6, 0, 0.5, { scale: 0.96 });
-    card(cam, out, "worker", "stand", { ...POSES.stand, headTilt: 8 }, 22.6, 0, 0.2, { scale: 0.96 });
+    // v2 (B10): the sand sketch itself — a little pyramid glyph scratched on the dais floor in front of the pharaoh
+    out.fx.push({ key: "sandsketch", cw: 320, ch: 240, draw: (p) => {
+      p.g.strokeStyle = "#7d5f30"; p.g.lineWidth = 11; p.g.lineCap = "round"; p.g.lineJoin = "round";
+      p.g.beginPath(); p.g.moveTo(52, 196); p.g.lineTo(160, 58); p.g.lineTo(268, 196); p.g.closePath(); p.g.stroke();
+      p.g.beginPath(); p.g.moveTo(160, 58); p.g.lineTo(160, 196); p.g.stroke();
+      p.g.beginPath(); p.g.moveTo(30, 208); p.g.lineTo(290, 208); p.g.stroke();
+      p.g.fillStyle = "#7d5f30"; p.g.beginPath(); p.g.arc(160, 30, 13, 0, Math.PI * 2); p.g.fill();
+    }, x: 19.6, y: 1.73, z: -1.4, w: 2.6, h: 1.95, flat: true, rot: 0.35 });
+    // v2: workers look blank (glyphFlat) until mid-beat (blank -> listening), then nod at "fifty-eight hundred"
+    const nod = lt >= 3.4; // v2 80 s: nod at "fifty-eight hundred"
+    const listening = nod || lt >= 2.2; // v2 80 s: blank -> listening mid-beat
+    card(cam, out, "worker", nod ? "kneelNod" : "kneel", nod ? { ...POSES.kneel, headTilt: 22 } : POSES.kneel, 13.6, 0, 0.5, { expr: listening ? "glyph" : "glyphFlat", scale: 0.96 });
+    card(cam, out, "worker", nod ? "standNod" : "stand", { ...POSES.stand, headTilt: nod ? 18 : 8 }, 22.6, 0, 0.2, { expr: listening ? "glyph" : "glyphFlat", scale: 0.96 });
   }
   if (id === 13) {
     const caught = t >= T_SMALLCATCH;
@@ -380,7 +403,7 @@ export const stage = (id: number, t: number, cam: CamInfo): Stage => {
     card(cam, out, "guard", "stand", POSES.stand, 50, 0, -43, { gear: true, scale: 0.98 });
   }
   if (id === 15) {
-    card(cam, out, "pharaoh", lt > 2.2 ? "clap" : "armsWide", lt > 2.2 ? POSES.clap : POSES.armsWide, 48.5, 0, -47, { scale: 1.05 });
+    card(cam, out, "pharaoh", lt > 1.6 ? "clap" : "armsWide", lt > 1.6 ? POSES.clap : POSES.armsWide, 48.5, 0, -47, { scale: 1.05 }); // v2 80 s: clap just after the legs line lands
     card(cam, out, "spidey", "facepalm", POSES.spideyFacepalm, 52.5, 0, -46, {});
     card(cam, out, "worker", "cheer", POSES.cheer, 62, 0, -45, { scale: 0.96 });
   }
