@@ -55,7 +55,7 @@ jobs:
               return 1
             fi
             echo "== Шаг 2. POST /v1/videos (seedance-2.5, seconds=20) =="
-            req=$(jq -n --arg model "seedance-2.5" --arg prompt "$TEST_PROMPT" --argjson seconds 20 --arg size "720x1280" --arg resolution "720p" --arg aspect_ratio "9:16" --argjson generate_audio false '{model:$model,prompt:$prompt,seconds:$seconds,size:$size,resolution:$resolution,aspect_ratio:$aspect_ratio,generate_audio:$generate_audio}' || true)
+            req=$(jq -n --arg model "seedance-2.5" --arg prompt "$TEST_PROMPT" --argjson seconds 20 --arg size "720x1280" --arg resolution "720p" --arg aspect_ratio "9:16" --argjson generate_audio true '{model:$model,prompt:$prompt,seconds:$seconds,size:$size,resolution:$resolution,aspect_ratio:$aspect_ratio,generate_audio:$generate_audio}' || true)
             http=$(curl -s -A "$USER_AGENT" -H "Authorization: Bearer $NICEAI_KEY" -H "Content-Type: application/json" -d "$req" -o create.json -w '%{http_code}' "$BASE_URL/videos" || true)
             echo "HTTP: $http"
             echo "--- ответ POST /v1/videos (точный текст) ---"
@@ -189,7 +189,7 @@ jobs:
               echo "ОШИБКА ГЕЙТА: models вернул HTTP $http — досрочный выход"
               return 1
             fi
-            req=$(jq -n --arg model "seedance-2.5" --arg prompt "$TEST_PROMPT" --argjson seconds 20 --arg size "720x1280" --arg resolution "720p" --arg aspect_ratio "9:16" --argjson generate_audio false '{model:$model,prompt:$prompt,seconds:$seconds,size:$size,resolution:$resolution,aspect_ratio:$aspect_ratio,generate_audio:$generate_audio}' || true)
+            req=$(jq -n --arg model "seedance-2.5" --arg prompt "$TEST_PROMPT" --argjson seconds 20 --arg size "720x1280" --arg resolution "720p" --arg aspect_ratio "9:16" --argjson generate_audio true '{model:$model,prompt:$prompt,seconds:$seconds,size:$size,resolution:$resolution,aspect_ratio:$aspect_ratio,generate_audio:$generate_audio}' || true)
             http=$(curl -s -A "$USER_AGENT" -H "Authorization: Bearer $NICEAI_KEY" -H "Content-Type: application/json" -d "$req" -o gate-create.json -w '%{http_code}' "$BASE_URL/videos" || true)
             echo "POST /v1/videos (тест 20 сек) HTTP: $http"
             cat gate-create.json
@@ -219,7 +219,7 @@ jobs:
             echo "ГЕЙТ ПРОЙДЕН: тестовая задача $gate_id completed"
             echo "== Клип $CLIP_N: POST /v1/videos (seedance-2.5, seconds=20) =="
             seconds=20
-            req=$(jq -n --arg model "seedance-2.5" --arg prompt "$CLIP_PROMPT" --argjson seconds "$seconds" --arg size "720x1280" --arg resolution "720p" --arg aspect_ratio "9:16" --argjson generate_audio false '{model:$model,prompt:$prompt,seconds:$seconds,size:$size,resolution:$resolution,aspect_ratio:$aspect_ratio,generate_audio:$generate_audio}' || true)
+            req=$(jq -n --arg model "seedance-2.5" --arg prompt "$CLIP_PROMPT" --argjson seconds "$seconds" --arg size "720x1280" --arg resolution "720p" --arg aspect_ratio "9:16" --argjson generate_audio true '{model:$model,prompt:$prompt,seconds:$seconds,size:$size,resolution:$resolution,aspect_ratio:$aspect_ratio,generate_audio:$generate_audio}' || true)
             http=$(curl -s -A "$USER_AGENT" -H "Authorization: Bearer $NICEAI_KEY" -H "Content-Type: application/json" -d "$req" -o create.json -w '%{http_code}' "$BASE_URL/videos" || true)
             echo "HTTP: $http"
             echo "--- ответ POST /v1/videos (точный текст) ---"
