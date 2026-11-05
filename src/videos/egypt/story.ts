@@ -1,4 +1,4 @@
-// Timeline of "What if Spider-Man ended up in Ancient Egypt?": 17 narration beats -> 15 shots.
+// Timeline of "What if Spider-Man ended up in Ancient Egypt?": 15 narration beats -> 15 shots (v2 80 s cut).
 // All timing derives from the BEAT table (seconds), so locking the picture to the recorded voice is a
 // one-table edit. Story events (fall, palm bend, obelisk swing, rope snap, block slide, small-block catch)
 // are pure functions of story time t (seconds) exported for cast.ts (cards) and world.ts (props + webs).
@@ -24,22 +24,22 @@ export const easeIn = (u: number) => clamp01(u) ** 2;
 const lerp = (a: number, b: number, k: number) => a + (b - a) * k;
 
 // ---------------- beats (provisional durations; locked to the voice at the sound pass) ----------------
-export const BEAT_DUR = [7.5, 7.0, 7.0, 5.0, 4.5, 6.0, 6.5, 7.0, 5.5, 3.5, 7.5, 4.0, 6.5, 7.0, 6.5, 5.5, 4.5];
+export const BEAT_DUR = [6.128, 5.977, 5.698, 5.478, 3.982, 5.941, 6.199, 6.593, 4.555, 6.633, 5.611, 4.642, 5.348, 3.858, 1.691]; // v2 80 s cut: locked to the re-recorded voice (line + 0.4 s each)
 export const BEAT_T: number[] = [];
 { let s = 0; for (const d of BEAT_DUR) { BEAT_T.push(s); s += d; } }
-export const TOTAL_S = BEAT_T[16] + BEAT_DUR[16] + 1.2; // + tail hold
+export const TOTAL_S = BEAT_T[14] + BEAT_DUR[14] + 1.2; // + tail hold
 export const TOTAL = Math.round(TOTAL_S * FPS);
 
 // event times (seconds), anchored to beats
 export const T_LAND = 2.1;
-export const T_PALM_FIRE = BEAT_T[4] + 0.6;         // web hits the palm (beat 5)
-export const T_PALM_DUMP = BEAT_T[4] + 3.4;         // palm has bent him to the ground
-export const T_SWING0 = BEAT_T[5] + 0.8;            // obelisk swing window
-export const T_SWING1 = BEAT_T[5] + 4.6;
-export const T_SNAP = BEAT_T[7] + 5.1;              // the rope parts (late in beat 8)
-export const T_CATCH = BEAT_T[8] + 0.7;             // webs hit the block (beat 9)
-export const T_STOP = T_CATCH + 2.6;                // block fully stopped
-export const T_WOBBLE = BEAT_T[14] + 3.4;           // the small stone wobbles (beat 15)
+export const T_PALM_FIRE = BEAT_T[4] + 1.41;        // web hits the palm (beat 5, at "Just palm trees")
+export const T_PALM_DUMP = BEAT_T[4] + 3.35;        // palm has bent him to the ground (at "bend")
+export const T_SWING0 = BEAT_T[5] + 1.5;            // obelisk swing window (at "It works exactly once")
+export const T_SWING1 = BEAT_T[5] + 4.9;
+export const T_SNAP = BEAT_T[7] + 4.6;              // the rope parts (beat 8, as the block starts sliding)
+export const T_CATCH = BEAT_T[8] + 2.1;             // webs hit the block (beat 9, at "fires both webs")
+export const T_STOP = T_CATCH + 2.4;                // block fully stopped
+export const T_WOBBLE = BEAT_T[12] + 3.4;           // the small stone wobbles (beat 13, at "official catcher")
 export const T_SMALLCATCH = T_WOBBLE + 1.1;
 
 // ---------------- shots ----------------
@@ -57,13 +57,13 @@ export const SHOTS: ShotDef[] = [
   shot(6, 5, 5, "day"),           // the obelisk works exactly once
   shot(7, 6, 6, "day"),           // the word is god
   shot(8, 7, 8, "day"),           // rope snap + the catch
-  shot(9, 9, 9, "day"),           // luckily: the pharaoh claps
-  shot(10, 10, 10, "day"),        // unluckily: a god's welcome
-  shot(11, 11, 12, "golden"),     // sunset platform -> crane up the pyramid (fact)
-  shot(12, 13, 13, "golden"),     // the sand sketch (analogy)
-  shot(13, 14, 14, "day"),        // official catcher of falling stones
-  shot(14, 15, 15, "day"),        // a second sphinx
-  { id: 15, a: Math.round(BEAT_T[16] * FPS), b: TOTAL, light: "day", crowd: "none" }, // eight legs
+  { id: 9, a: Math.round(BEAT_T[9] * FPS), b: Math.round((BEAT_T[9] + 2.12) * FPS), light: "day", crowd: "none" }, // luckily: the pharaoh claps
+  { id: 10, a: Math.round((BEAT_T[9] + 2.12) * FPS), b: Math.round((BEAT_T[9] + BEAT_DUR[9]) * FPS), light: "day", crowd: "none" }, // unluckily: a god's welcome
+  shot(11, 10, 10, "golden"),     // the fact: platform -> 3 hard pyramid cuts (v2; v1's crane glide removed)
+  shot(12, 11, 11, "golden"),     // the sand sketch (analogy)
+  shot(13, 12, 12, "day"),        // official catcher of falling stones
+  shot(14, 13, 13, "day"),        // a second sphinx
+  { id: 15, a: Math.round(BEAT_T[14] * FPS), b: TOTAL, light: "day", crowd: "none" }, // eight legs
 ];
 export const XFADE: Record<number, number> = { 11: 8, 13: 8 };
 export const FLASH_AT = SHOTS[0].b;
@@ -135,7 +135,7 @@ export const swingObelisk = (t: number) => {
 export const dragPos = (t: number): V3 => {
   if (t < T_CATCH) return [-26.5, 0, 7.5];
   const k = smooth((t - T_CATCH) / (T_STOP - T_CATCH));
-  return [lerp(-26.5, -29.6, k), 0, lerp(7.5, 5.2, k)];
+  return [lerp(-26.5, -27.3, k), 0, lerp(7.5, 6.4, k)];
 };
 /** web segments to draw this frame: [from, to] pairs in world space */
 export const webSegs = (id: number, t: number): { a: V3; b: V3 }[] => {
@@ -198,57 +198,95 @@ const drift = (a: Shot, b: Shot, f: number, f0: number, f1: number): Shot => {
 };
 const S = (id: number) => SHOTS[id - 1];
 
+// v2 (PLAN_V2): every sub-shot is a HARD CUT on a narration phrase boundary or a story
+// anchor; each framing is static + a punch-in at its start (pushK punch, creep <= 0.0008).
+// No non-cut mixes remain (v1's glides swept blank walls — BUGS_V2 B5). Only the shot-2
+// aerial inserts keep small drifts, each inside its own sub-shot window.
 const CAMS: Record<number, Key[]> = {
   1: [
-    { f: 0, s: (f) => dolly([10, 8.5, 33], [-24, 11, -14], pushK(f, 0, 0.0016), { fov: 46 }) },
-    { f: 96, dur: 34, s: (f) => dolly([-11, 3.2, 15], [-20, 2.4, 2], pushK(f, 96, 0.0022), { fov: 42 }) },
+    { f: 0, s: (f) => dolly([2, 10, 26], [-26, 16, -12], pushK(f, 0, 0.0006, 0.028, 14), { fov: 46 }) },
+    { f: 67, cut: true, s: (f) => dolly([-11, 3.2, 15], [-20, 2.4, 2], pushK(f, 67, 0.0006, 0.016, 12), { fov: 42 }) },
+    { f: 108, cut: true, s: (f) => dolly([-5, 4.2, 18], [-22.5, 1.2, 4.5], pushK(f, 108, 0.0005, 0.012, 12), { fov: 44 }) },
   ],
   2: [
-    { f: S(2).a, s: (f) => drift({ pos: [124, 64, 96], look: [-8, 0, -22], fov: 46 }, { pos: [100, 52, 110], look: [4, 0, -14], fov: 44 }, f, S(2).a, S(2).b) },
+    { f: S(2).a, s: (f) => drift({ pos: [124, 64, 96], look: [-8, 0, -22], fov: 46 }, { pos: [112, 58, 104], look: [-4, 0, -18], fov: 45 }, f, S(2).a, 212) },
+    { f: 212, cut: true, s: (f) => drift({ pos: [54, 22, 128], look: [-16, 0, 26], fov: 44 }, { pos: [46, 19, 122], look: [-12, 0, 22], fov: 44 }, f, 261, 296) },
+    { f: 256, cut: true, s: (f) => drift({ pos: [26, 30, 44], look: [-38, 14, -12], fov: 44 }, { pos: [20, 27, 40], look: [-38, 15, -10], fov: 43 }, f, 296, 335) },
+    { f: 290, cut: true, s: (f) => drift({ pos: [36, 8, -16], look: [14, 5, -46], fov: 42 }, { pos: [33, 7, -15], look: [14, 5, -46], fov: 42 }, f, 290, S(2).b) },
   ],
   3: [
-    { f: S(3).a, s: (f) => dolly([-6, 3.4, 19], [-38, 10, -8], pushK(f, S(3).a, 0.0018), { fov: 43 }) },
-    { f: S(3).a + 118, dur: 30, s: (f) => dolly([28, 2.7, 9], [19, 2.3, -4], pushK(f, S(3).a + 118, 0.002), { fov: 40 }) },
+    { f: S(3).a, s: (f) => dolly([-2, 4, 24], [-34, 9, -4], pushK(f, S(3).a, 0.0006, 0.014, 12), { fov: 44 }) },
+    { f: 415, cut: true, s: (f) => dolly([28, 2.7, 9], [19, 2.3, -4], pushK(f, 415, 0.0006, 0.014, 12), { fov: 40 }) },
+    { f: 463, cut: true, s: (f) => dolly([-24, 16, 10], [-38, 19, -4], pushK(f, 463, 0.0005, 0.012, 12), { fov: 40 }) },
   ],
   4: [
-    { f: S(4).a, s: (f) => dolly([-12.5, 2.5, 10.5], [-20, 2.7, 2], pushK(f, S(4).a, 0.0022), { fov: 38 }) },
-    { f: S(4).a + 84, dur: 26, s: (f) => dolly([-0.5, 3.0, 13], [-9, 5.5, 5], pushK(f, S(4).a + 84, 0.0016), { fov: 38 }) },
+    { f: S(4).a, s: (f) => dolly([-12.5, 2.5, 10.5], [-20, 2.7, 2], pushK(f, S(4).a, 0.0006, 0.014, 12), { fov: 38 }) },
+    { f: 605, cut: true, s: (f) => dolly([-15.5, 2.6, 7.5], [-20, 2.5, 2], pushK(f, 605, 0.0005, 0.012, 10), { fov: 34 }) },
+    { f: 634, cut: true, s: (f) => dolly([1, 2.6, 16.5], [-12.5, 4.6, 3.5], pushK(f, 634, 0.0006, 0.014, 12), { fov: 46 }) },
+    { f: 662, cut: true, s: (f) => dolly([-1, 4, 12], [-6, 8.5, 6], pushK(f, 662, 0.0004, 0.01, 10), { fov: 40 }) },
   ],
   5: [
-    { f: S(5).a, s: (f) => dolly([4.5, 2.4, 15], [-8.5, 3.6, 5], pushK(f, S(5).a, 0.0018), { fov: 41 }) },
+    { f: S(5).a, s: (f) => dolly([5, 2.4, 15.5], [-10.5, 3.4, 5], pushK(f, S(5).a, 0.0006, 0.016, 12), { fov: 41 }) },
+    { f: 740, cut: true, s: (f) => dolly([3, 2.2, 13], [-8.8, 3.2, 5], pushK(f, 740, 0.0005, 0.012, 12), { fov: 38 }) },
+    { f: 776, cut: true, s: (f) => dolly([-4, 1.6, 13], [-12.5, 1.2, 5.5], pushK(f, 776, 0.0005, 0.014, 12), { fov: 40 }) },
+    { f: 803, cut: true, s: (f) => dolly([-11, 2.2, 17], [-11.8, 1.4, 6.5], pushK(f, 803, 0.0004, 0.01, 10), { fov: 40 }) },
   ],
   6: [
-    { f: S(6).a, s: (f) => dolly([35, 3.2, 34], [36.5, 10, 0], pushK(f, S(6).a, 0.0012), { fov: 47 }) },
+    { f: S(6).a, s: (f) => dolly([35, 3.2, 34], [36.5, 10, 0], pushK(f, S(6).a, 0.0006, 0.012, 12), { fov: 47 }) },
+    { f: 903, cut: true, s: (f) => dolly([24, 4, 20], [33, 9, 1], pushK(f, 903, 0.0006, 0.014, 12), { fov: 42 }) },
+    { f: 953, cut: true, s: (f) => dolly([15, 2.8, 18], [24, 1.6, 8], pushK(f, 953, 0.0005, 0.012, 12), { fov: 40 }) },
   ],
   7: [
-    { f: S(7).a, s: (f) => dolly([-1, 2.1, 7], [-15, 1.9, -3], pushK(f, S(7).a, 0.0024), { fov: 36 }) },
-    { f: S(7).a + 96, dur: 28, s: (f) => dolly([26.5, 2.6, 7], [19, 2.4, -4], pushK(f, S(7).a + 96, 0.002), { fov: 38 }) },
+    { f: S(7).a, s: (f) => dolly([-30, 2.6, 10], [-13.5, 1.5, -0.5], pushK(f, S(7).a, 0.0005, 0.012, 12), { fov: 46 }) },
+    { f: 1133, cut: true, s: (f) => dolly([26.5, 2.6, 7], [19, 2.4, -4], pushK(f, 1133, 0.0006, 0.014, 12), { fov: 38 }) },
+    { f: 1155, cut: true, s: (f) => dolly([25, 2.8, 4], [19.5, 2.6, -4], pushK(f, 1155, 0.0004, 0.01, 10), { fov: 36 }) },
   ],
   8: [
-    { f: S(8).a, s: (f) => dolly([-23, 12.5, 3], [-38, 15, -6], pushK(f, S(8).a, 0.0016), { fov: 37 }) },
-    { f: Math.round(T_SNAP * FPS), cut: true, s: (f) => dolly([-6, 5.5, 25], [-34, 8, -2], pushK(f, Math.round(T_SNAP * FPS), 0.0018), { fov: 46 }) },
+    { f: S(8).a, s: (f) => dolly([-12, 6, 22], [-37, 12, -4], pushK(f, S(8).a, 0.0006, 0.014, 12), { fov: 46 }) },
+    { f: 1211, cut: true, s: (f) => dolly([-22, 19, 10], [-38, 18.5, -4], pushK(f, 1211, 0.0005, 0.012, 10), { fov: 40 }) },
+    { f: 1252, cut: true, s: (f) => dolly([-27, 2.6, 24], [-38.5, 1.6, 12], pushK(f, 1252, 0.0005, 0.012, 12), { fov: 46 }) },
+    { f: 1300, cut: true, s: (f) => dolly([-19, 2.2, 13], [-26.5, 1.8, 7.5], pushK(f, 1300, 0.0005, 0.014, 10), { fov: 38 }) },
+    { f: 1320, cut: true, s: (f) => dolly([-22, 2.3, 19], [-38, 1.8, 11.5], pushK(f, 1320, 0.0006, 0.016, 12), { fov: 38 }) },
+    { f: 1347, cut: true, s: (f) => dolly([-6, 5.5, 25], [-34, 8, -2], pushK(f, 1347, 0.0006, 0.016, 12), { fov: 46 }) },
+    { f: 1443, cut: true, s: (f) => dolly([-14, 3, 16], [-29, 2.5, 4], pushK(f, 1443, 0.0005, 0.016, 12), { fov: 42 }) },
+    { f: 1473, cut: true, s: (f) => dolly([-16, 2.8, 14.5], [-27.6, 2.2, 5.9], pushK(f, 1473, 0.0005, 0.014, 10), { fov: 40 }) },
   ],
   9: [
-    { f: S(9).a, s: (f) => dolly([28, 3, 8.5], [17.8, 2.6, -1], pushK(f, S(9).a, 0.002), { fov: 40 }) },
+    { f: S(9).a, s: (f) => dolly([27, 3, 9], [18.5, 2.4, 0], pushK(f, S(9).a, 0.0006, 0.014, 10), { fov: 42 }) },
+    { f: 1547, cut: true, s: (f) => dolly([24, 2.6, 8], [18.6, 2.2, 2], pushK(f, 1547, 0.0005, 0.012, 12), { fov: 40 }) },
   ],
   10: [
-    { f: S(10).a, s: (f) => dolly([26.5, 3.4, 12], [18.2, 1.6, -2.8], pushK(f, S(10).a, 0.0016), { fov: 40 }) },
+    { f: S(10).a, s: (f) => dolly([29, 2.8, 9], [17.5, 1.7, -2.4], pushK(f, S(10).a, 0.0006, 0.012, 12), { fov: 42 }) },
+    { f: 1607, cut: true, s: (f) => dolly([23.5, 2.6, 5], [17.6, 2.2, -1.6], pushK(f, 1607, 0.0005, 0.012, 10), { fov: 38 }) },
+    { f: 1629, cut: true, s: (f) => dolly([30, 2.6, 10], [16, 1.2, 0.8], pushK(f, 1629, 0.0005, 0.012, 12), { fov: 44 }) },
+    { f: 1663, cut: true, s: (f) => dolly([23.5, 2.6, 5], [17.6, 2.0, -1.6], pushK(f, 1663, 0.0004, 0.01, 10), { fov: 38 }) },
   ],
   11: [
-    { f: S(11).a, s: (f) => dolly([28.5, 3.1, 6], [18.5, 2.7, -4], pushK(f, S(11).a, 0.0015), { fov: 42 }) },
-    { f: Math.round(BEAT_T[12] * FPS) - 20, dur: 60, s: (f) => drift({ pos: [-14, 26, 10], look: [-38, 34, -38], fov: 43 }, { pos: [-22, 45, -2], look: [-38, 49, -45], fov: 41 }, f, Math.round(BEAT_T[12] * FPS) - 20, S(11).b) },
+    { f: S(11).a, s: (f) => dolly([28.5, 3.1, 6], [18.5, 2.7, -4], pushK(f, S(11).a, 0.0006, 0.012, 12), { fov: 42 }) },
+    { f: 1758, cut: true, s: (f) => dolly([26, 2.9, 5], [18.2, 2.4, -3.9], pushK(f, 1758, 0.0005, 0.012, 10), { fov: 40 }) },
+    { f: 1794, cut: true, s: (f) => dolly([24.5, 2.9, 1], [20.2, 2.6, -4], pushK(f, 1794, 0.0004, 0.01, 10), { fov: 36 }) },
+    { f: 1824, cut: true, s: (f) => dolly([-2, 4, 30], [-36, 9, -20], pushK(f, 1824, 0.0005, 0.012, 12), { fov: 46 }) },
+    { f: 1851, cut: true, s: (f) => dolly([-25, 2.6, 23], [-38.5, 1.8, 11.8], pushK(f, 1851, 0.0004, 0.01, 10), { fov: 46 }) },
+    { f: 1869, cut: true, s: (f) => dolly([20, 30, 10], [-38, 48, -52], pushK(f, 1869, 0.0003, 0.008, 10), { fov: 46 }) },
   ],
   12: [
-    { f: S(12).a, s: (f) => dolly([24.5, 2.4, 4.5], [18, 1.5, -3.2], pushK(f, S(12).a, 0.0022), { fov: 42 }) },
+    { f: S(12).a, s: (f) => dolly([24.5, 2.4, 4.5], [18, 1.2, -3.2], pushK(f, S(12).a, 0.0006, 0.012, 12), { fov: 42 }) },
+    { f: 1986, cut: true, s: (f) => dolly([21, 5.5, 2.5], [18.8, 1.6, -2.2], pushK(f, 1986, 0.0004, 0.01, 10), { fov: 40 }) },
   ],
   13: [
-    { f: S(13).a, s: (f) => dolly([-14, 3.2, 13], [-30, 4.5, -3], pushK(f, S(13).a, 0.0018), { fov: 42 }) },
+    { f: S(13).a, s: (f) => dolly([-10, 3, 20], [-31, 7, -2], pushK(f, S(13).a, 0.0005, 0.012, 12), { fov: 47 }) },
+    { f: 2113, cut: true, s: (f) => dolly([-24, 14, 8], [-34.5, 17.5, -1], pushK(f, 2113, 0.0004, 0.01, 10), { fov: 38 }) },
+    { f: 2158, cut: true, s: (f) => dolly([-12, 3.2, 18], [-27.5, 7, 2], pushK(f, 2158, 0.0005, 0.014, 10), { fov: 47 }) },
+    { f: 2171, cut: true, s: (f) => dolly([-12, 2.8, 17], [-25.5, 1.7, 7], pushK(f, 2171, 0.0004, 0.01, 10), { fov: 38 }) },
   ],
   14: [
-    { f: S(14).a, s: (f) => dolly([74, 7.5, -64], [55, 5, -36.5], pushK(f, S(14).a, 0.0016), { fov: 42 }) },
+    { f: S(14).a, s: (f) => dolly([80, 8, -70], [55, 4.5, -36.5], pushK(f, S(14).a, 0.0006, 0.012, 12), { fov: 42 }) },
+    { f: 2217, cut: true, s: (f) => dolly([52, 2.6, -54], [57.5, 2.2, -47], pushK(f, 2217, 0.0005, 0.012, 12), { fov: 42 }) },
+    { f: 2262, cut: true, s: (f) => dolly([47, 3, -52], [57, 3.5, -40], pushK(f, 2262, 0.0004, 0.01, 10), { fov: 42 }) },
   ],
   15: [
-    { f: S(15).a, s: (f) => dolly([70, 6, -60], [57, 4.5, -37.5], pushK(f, S(15).a, 0.0016, 0.0025, 30), { fov: 40 }) },
+    { f: S(15).a, s: (f) => dolly([44, 3.2, -56], [55, 3, -42], pushK(f, S(15).a, 0.0005, 0.012, 12), { fov: 46 }) },
+    { f: 2338, cut: true, s: (f) => dolly([44, 2.6, -54], [54.5, 2.8, -43], pushK(f, 2338, 0.0004, 0.012, 12), { fov: 44 }) },
   ],
 };
 
