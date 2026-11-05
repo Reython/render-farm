@@ -1,4 +1,4 @@
-name: NiceAI Seedance 2.5 — Season 2 Episode 1 retry (clip 4)
+name: NiceAI Seedance 2.5 — Season 2 Episode 1 retry (clips 14, 18)
 
 on:
   workflow_dispatch:
@@ -15,7 +15,7 @@ jobs:
       fail-fast: false
       max-parallel: 5
       matrix:
-        clip: [4]
+        clip: [14, 18]
     env:
       BASE_URL: https://api.niceai.rest/v1
       USER_AGENT: Mozilla/5.0
