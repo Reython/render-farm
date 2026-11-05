@@ -114,16 +114,25 @@ const smallCaughtAt = (t: number) => t >= T_SMALLCATCH;
 
 /** spidey's anchor points for webs, per story phase (world draws the lines; cast places the card) */
 export const SPIDEY_HOME: V3 = [-20, 0, 2];
-export const palmTop = (): V3 => [SITE.heroPalm.x, 8.8, SITE.heroPalm.z];
+/** the hero palm's crown (where the fronds attach) at time t: build.ts setBend() puts the crown at the
+ *  end of its quadratic trunk curve, and world.ts drives it with bend = 0.05 + palmBend * 0.95. The web
+ *  anchors HERE, on the moving crown — not on a fixed point the bending trunk leaves behind. */
+export const palmCrown = (t: number): V3 => {
+  const b = 0.05 + egyptState(t).palmBend * 0.95, h = 9;
+  return [SITE.heroPalm.x - b * h * 0.55, h * (1 - b * 0.28), SITE.heroPalm.z];
+};
 export const swingPalm = (t: number) => {
-  // pendulum from the palm top: he swings in, the palm bends, and he is lowered to the ground
+  // pendulum from the moving crown: he swings in as the palm bends and is lowered to the ground
+  // (the crown's descent plus a shortening line set his feet down at the dump instead of under it)
   const st = egyptState(t);
-  const L = 6.4, a0 = palmTop();
-  const th = -0.95 + 1.15 * smooth((t - T_PALM_FIRE) / 1.5); // swing angle from vertical
-  const hand: V3 = [a0[0] + Math.sin(th) * L, a0[1] - Math.cos(th) * L * (1 - st.palmBend * 0.35), a0[2]];
+  const a0 = palmCrown(t);
+  const u = clamp01((t - T_PALM_FIRE) / 1.9);
+  const th = -0.95 + 1.35 * smooth(u); // swing angle from vertical
+  const L = 6.4 - 1.55 * smooth(u);
+  const hand: V3 = [a0[0] + Math.sin(th) * L, a0[1] - Math.cos(th) * L, a0[2]];
   return { hand, th, bend: st.palmBend };
 };
-export const OBELISK_A: V3 = [SITE.obelisks[0].x, 20.4, SITE.obelisks[0].z];
+export const OBELISK_A: V3 = [SITE.obelisks[0].x, 21.1, SITE.obelisks[0].z]; // the pyramidion TIP (was 20.4: inside the cone)
 export const swingObelisk = (t: number) => {
   const u = clamp01((t - T_SWING0) / (T_SWING1 - T_SWING0));
   const th = -0.62 * Math.cos(u * Math.PI * 1.9) * (1 - u * 0.25); // one big arc, decaying
@@ -131,31 +140,49 @@ export const swingObelisk = (t: number) => {
   const hand: V3 = [a0[0] + Math.sin(th) * L, a0[1] - Math.cos(th) * L, a0[2]];
   return { hand, th };
 };
+/** after the obelisk swing he pays out line and drops to the landing spot (cast places the card by this hand) */
+export const descentHand = (t: number): V3 => {
+  const hs = swingObelisk(T_SWING1).hand;
+  const k = clamp01((t - T_SWING1) / 0.4);
+  return [lerp(hs[0], 24.2, k), lerp(hs[1], 2.0, easeIn(k)), lerp(hs[2], 2.6, k)];
+};
 /** during the catch: spidey is dragged from his firing spot toward the ramp as the block decelerates */
 export const dragPos = (t: number): V3 => {
   if (t < T_CATCH) return [-26.5, 0, 7.5];
   const k = smooth((t - T_CATCH) / (T_STOP - T_CATCH));
   return [lerp(-26.5, -27.3, k), 0, lerp(7.5, 6.4, k)];
 };
-/** web segments to draw this frame: [from, to] pairs in world space */
+/** the two catch-web ends ON the great block's front face (granite spans group y 0.8..3.9, front z +1.65;
+ *  seat the caps just proud of the face, never buried inside the block volume) */
+export const blockWebEnds = (t: number): [V3, V3] => {
+  const bp = blockPos(egyptState(t).blockU);
+  return [[bp[0] - 1.2, bp[1] + 3.1, bp[2] + 1.68], [bp[0] + 1.3, bp[1] + 2.8, bp[2] + 1.68]];
+};
+/** the small-catch web end ON the small block's top face (box is 1.5 tall, centred on SMALL_BLOCK) */
+export const smallWebEnd = (): V3 => [SMALL_BLOCK[0] + 0.3, SMALL_BLOCK[1] + 0.76, SMALL_BLOCK[2]];
+/** when each shot's webs fire; world.ts grows the line out of the hero's hand over ~0.13 s */
+export const WEB_FIRE: Record<number, number> = { 5: T_PALM_FIRE, 6: T_SWING0 - 0.12, 8: T_CATCH - 0.05, 13: T_SMALLCATCH - 0.05 };
+export const webGrowth = (id: number, t: number) => (WEB_FIRE[id] === undefined ? 1 : clamp01((t - WEB_FIRE[id]) / 0.13));
+/** web segments to draw this frame: [from, to] pairs in world space. Hero-side ends are NOMINAL here —
+ *  world.ts replaces them with the hero's drawn hand positions, so a web always starts at the hand. */
 export const webSegs = (id: number, t: number): { a: V3; b: V3 }[] => {
   const out: { a: V3; b: V3 }[] = [];
   const st = egyptState(t);
-  if (id === 5 && t > T_PALM_FIRE - 0.12 && t < T_PALM_DUMP + 1.2) {
+  if (id === 5 && t >= T_PALM_FIRE && t < T_PALM_DUMP) {
     const { hand } = swingPalm(t);
-    out.push({ a: palmTop(), b: hand });
+    out.push({ a: palmCrown(t), b: hand });
   }
-  if (id === 6 && t > T_SWING0 - 0.1 && t < T_SWING1 + 0.4) {
-    const { hand } = swingObelisk(t);
+  if (id === 6 && t > T_SWING0 - 0.12 && t < T_SWING1 + 0.22) {
+    const hand = t <= T_SWING1 ? swingObelisk(t).hand : descentHand(t);
     out.push({ a: OBELISK_A, b: hand });
   }
-  if (id === 8 && t >= T_CATCH - 0.05 && t < T_STOP + 2.5) {
-    const bp = blockPos(st.blockU), d = dragPos(t);
-    out.push({ a: [d[0] + 0.35, 2.45, d[2] - 0.3], b: [bp[0] - 1.2, bp[1] + 3.6, bp[2] + 1.2] });
-    out.push({ a: [d[0] - 0.1, 2.3, d[2] + 0.25], b: [bp[0] + 1.3, bp[1] + 3.3, bp[2] + 1.0] });
+  if (id === 8 && t >= T_CATCH - 0.05 && t < T_STOP) {
+    const d = dragPos(t), [e1, e2] = blockWebEnds(t);
+    out.push({ a: [d[0] + 0.35, 2.45, d[2] - 0.3], b: e1 });
+    out.push({ a: [d[0] - 0.1, 2.3, d[2] + 0.25], b: e2 });
   }
   if (id === 13 && t >= T_SMALLCATCH - 0.05) {
-    out.push({ a: [-23.4, 1.9, 8.6], b: [SMALL_BLOCK[0] + 0.6, SMALL_BLOCK[1] + 1.6, SMALL_BLOCK[2]] });
+    out.push({ a: [-23.4, 1.9, 8.6], b: smallWebEnd() });
   }
   return out;
 };
@@ -227,14 +254,14 @@ const CAMS: Record<number, Key[]> = {
   ],
   5: [
     { f: S(5).a, s: (f) => dolly([5, 2.4, 15.5], [-10.5, 3.4, 5], pushK(f, S(5).a, 0.0006, 0.016, 12), { fov: 41 }) },
-    { f: 740, cut: true, s: (f) => dolly([3, 2.2, 13], [-8.8, 3.2, 5], pushK(f, 740, 0.0005, 0.012, 12), { fov: 38 }) },
-    { f: 776, cut: true, s: (f) => dolly([-4, 1.6, 13], [-12.5, 1.2, 5.5], pushK(f, 776, 0.0005, 0.014, 12), { fov: 40 }) },
-    { f: 803, cut: true, s: (f) => dolly([-11, 2.2, 17], [-11.8, 1.4, 6.5], pushK(f, 803, 0.0004, 0.01, 10), { fov: 40 }) },
+    { f: 740, cut: true, s: (f) => dolly([-11, 3.6, 24], [-11.1, 3.9, 6], pushK(f, 740, 0.0005, 0.012, 12), { fov: 40 }) },
+    { f: 776, cut: true, s: (f) => dolly([-9.9, 3, 21], [-9.9, 3.2, 6], pushK(f, 776, 0.0005, 0.014, 12), { fov: 40 }) },
+    { f: 803, cut: true, s: (f) => dolly([-10.5, 2, 16], [-10.2, 1.1, 6], pushK(f, 803, 0.0004, 0.01, 10), { fov: 40 }) },
   ],
   6: [
-    { f: S(6).a, s: (f) => dolly([35, 3.2, 34], [36.5, 10, 0], pushK(f, S(6).a, 0.0006, 0.012, 12), { fov: 47 }) },
-    { f: 903, cut: true, s: (f) => dolly([24, 4, 20], [33, 9, 1], pushK(f, 903, 0.0006, 0.014, 12), { fov: 42 }) },
-    { f: 953, cut: true, s: (f) => dolly([15, 2.8, 18], [24, 1.6, 8], pushK(f, 953, 0.0005, 0.012, 12), { fov: 40 }) },
+    { f: S(6).a, s: (f) => dolly([30, 5.5, 47], [30, 10.5, 2], pushK(f, S(6).a, 0.0006, 0.012, 12), { fov: 47 }) },
+    { f: 903, cut: true, s: (f) => dolly([23, 1.6, 17], [33.5, 11, 2], pushK(f, 903, 0.0006, 0.014, 12), { fov: 46 }) },
+    { f: 953, cut: true, s: (f) => dolly([12, 3.4, 27], [25.5, 7.2, 3], pushK(f, 953, 0.0005, 0.012, 12), { fov: 48 }) },
   ],
   7: [
     { f: S(7).a, s: (f) => dolly([-30, 2.6, 10], [-13.5, 1.5, -0.5], pushK(f, S(7).a, 0.0005, 0.012, 12), { fov: 46 }) },
