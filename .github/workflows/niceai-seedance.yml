@@ -10,199 +10,100 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Probe NiceAI models and Seedance video
+      - name: Probe NiceAI models and Seedance video (curl)
         env:
           NICEAI_KEY: ${{ secrets.NICEAI_KEY }}
         run: |
+          set +e
           mkdir -p probe
-          python3 - << 'PY'
-          import json, os, time, urllib.request, urllib.error
-
-          BASE = "https://api.niceai.rest/v1"
-          KEY = os.environ.get("NICEAI_KEY", "")
-          PROMPT = "A young woman in a red dress stands in a luxury hotel lobby, cinematic vertical drama, she turns to camera with a defiant expression"
-
-          def log(msg):
-              print(msg, flush=True)
-              with open("probe/log.txt", "a", encoding="utf-8") as f:
-                  f.write(msg + "\n")
-
-          def req(method, path, payload=None, raw_url=None, use_auth=True):
-              url = raw_url or (BASE + path)
-              data = json.dumps(payload).encode() if payload is not None else None
-              r = urllib.request.Request(url, data=data, method=method)
-              if use_auth:
-                  r.add_header("Authorization", "Bearer " + KEY)
-              r.add_header("Content-Type", "application/json")
-              r.add_header("Accept", "application/json")
-              try:
-                  with urllib.request.urlopen(r, timeout=60) as resp:
-                      return resp.status, resp.read().decode("utf-8", "replace")
-              except urllib.error.HTTPError as e:
-                  return e.code, e.read().decode("utf-8", "replace")
-              except Exception as e:
-                  return 0, str(e)
-
-          def parse(body):
-              try:
-                  return json.loads(body)
-              except Exception:
-                  return None
-
-          def find_video_url(obj):
-              if isinstance(obj, dict):
-                  for k, v in obj.items():
-                      if isinstance(v, str) and v.startswith("http") and (v.endswith(".mp4") or ".mp4" in v or "video" in v.lower()):
-                          return v
-                      found = find_video_url(v)
-                      if found:
-                          return found
-              elif isinstance(obj, list):
-                  for v in obj:
-                      found = find_video_url(v)
-                      if found:
-                          return found
-              return None
-
-          def find_task_id(obj):
-              if isinstance(obj, dict):
-                  for k, v in obj.items():
-                      if k in ("task_id", "taskId") and isinstance(v, str) and v:
-                          return v
-                  for k, v in obj.items():
-                      if k == "id" and isinstance(v, str) and v:
-                          return v
-                  for v in obj.values():
-                      found = find_task_id(v)
-                      if found:
-                          return found
-              elif isinstance(obj, list):
-                  for v in obj:
-                      found = find_task_id(v)
-                      if found:
-                          return found
-              return None
-
-          def find_status(obj):
-              if isinstance(obj, dict):
-                  for k, v in obj.items():
-                      if k in ("status", "state") and isinstance(v, str):
-                          return v
-                  for v in obj.values():
-                      found = find_status(v)
-                      if found:
-                          return found
-              elif isinstance(obj, list):
-                  for v in obj:
-                      found = find_status(v)
-                      if found:
-                          return found
-              return None
-
-          def download(url, dest):
-              for use_auth in (True, False):
-                  try:
-                      r = urllib.request.Request(url, method="GET")
-                      if use_auth:
-                          r.add_header("Authorization", "Bearer " + KEY)
-                      with urllib.request.urlopen(r, timeout=120) as resp:
-                          data = resp.read()
-                      with open(dest, "wb") as f:
-                          f.write(data)
-                      log(f"DOWNLOADED {dest}: {len(data)} bytes, HTTP {resp.status}")
-                      return True
-                  except Exception as e:
-                      log(f"DOWNLOAD FAILED (use_auth={use_auth}): {e}")
-              return False
-
-          open("probe/log.txt", "w", encoding="utf-8").close()
-          if not KEY:
-              log("ERROR: NICEAI_KEY is empty")
-          else:
-              log("NICEAI_KEY present (value not printed)")
-
-          # (a) GET /v1/models
-          status, body = req("GET", "/v1/models")
-          log(f"GET /v1/models -> {status}: {body[:1000]}")
-          with open("probe/models.json", "w", encoding="utf-8") as f:
-              f.write(body)
-          parsed = parse(body)
-          ids = []
-          if isinstance(parsed, dict) and isinstance(parsed.get("data"), list):
-              ids = [m.get("id") for m in parsed["data"] if isinstance(m, dict) and m.get("id")]
-          elif isinstance(parsed, list):
-              ids = [m.get("id") for m in parsed if isinstance(m, dict) and m.get("id")]
-          log("MODEL_IDS:")
-          for mid in ids:
-              log(f"  - {mid}")
-          if not ids:
-              log("MODEL_IDS: none parsed from /v1/models response")
-
-          # (b) Video generation attempts, in order, stop at first task id / video URL
-          attempts = [
-              ("/v1/videos/generations", {"model": "seedance-2.5", "prompt": PROMPT, "duration": 5, "resolution": "480p", "aspect_ratio": "9:16"}),
-              ("/v1/videos/generations", {"model": "seedance-2-5", "prompt": PROMPT, "duration": 5, "resolution": "480p", "aspect_ratio": "9:16"}),
-              ("/v1/video/generations", {"model": "seedance-2.5", "prompt": PROMPT, "duration": 5, "resolution": "480p", "aspect_ratio": "9:16"}),
-              ("/v1/contents/generations/tasks", {"model": "doubao-seedance-2-5", "content": [{"type": "text", "text": PROMPT}], "ratio": "9:16", "duration": 5, "resolution": "480p"}),
-              ("/v1/chat/completions", {"model": "seedance-2.5", "messages": [{"role": "user", "content": PROMPT}]}),
-          ]
-          task_id = None
-          video_url = None
-          for i, (path, payload) in enumerate(attempts, 1):
-              status, body = req("POST", path, payload)
-              log(f"ATTEMPT {i} POST {path} model={payload.get('model')} -> {status}: {body[:1000]}")
-              parsed = parse(body)
-              if parsed is not None:
-                  video_url = find_video_url(parsed)
-                  if video_url:
-                      log(f"VIDEO_URL found in attempt {i}: {video_url}")
-                      download(video_url, "probe/test-clip.mp4")
-                      break
-                  if i < 5:
-                      task_id = find_task_id(parsed)
-                      if task_id:
-                          log(f"TASK_ID found in attempt {i}: {task_id}")
-                          break
-              if status == 200 and parsed is None:
-                  log(f"ATTEMPT {i}: HTTP 200 but non-JSON body, no task id found")
-          # (c) Poll for the task, if any
-          if task_id and not video_url:
-              endpoints = [
-                  f"/v1/videos/generations/{task_id}",
-                  f"/v1/videos/{task_id}",
-                  f"/v1/contents/generations/tasks/{task_id}",
-              ]
-              deadline = time.time() + 15 * 60
-              while time.time() < deadline and not video_url:
-                  terminal = False
-                  for ep in endpoints:
-                      status, body = req("GET", ep)
-                      log(f"POLL GET {ep} -> {status}: {body[:1000]}")
-                      parsed = parse(body)
-                      if parsed is not None:
-                          video_url = find_video_url(parsed)
-                          if video_url:
-                              log(f"VIDEO_URL found while polling: {video_url}")
-                              download(video_url, "probe/test-clip.mp4")
-                              break
-                          st = find_status(parsed)
-                          if st and st.lower() in ("failed", "error", "cancelled", "canceled"):
-                              log(f"POLL terminal status: {st}")
-                              terminal = True
-                  if video_url or terminal:
-                      break
-                  time.sleep(20)
-              if not video_url:
-                  log("POLL finished: no video URL within 15 minutes")
-          if not task_id and not video_url:
-              log("RESULT: no generation attempt returned a task id or a video URL")
-          log("DONE")
-          PY
+          : > probe/log.txt
+          BASE="https://api.niceai.rest/v1"
+          UA="Mozilla/5.0"
+          PROMPT="A young woman in a red dress stands in a luxury hotel lobby, cinematic vertical drama, she turns to camera with a defiant expression"
+          TASK_ID=""
+          VIDEO_URL=""
+          log() { printf '%s\n' "$*" | tee -a probe/log.txt; }
+          find_video_url() {
+            local u=""
+            u=$(jq -r '.. | strings? | select(startswith("http"))' "$1" 2>/dev/null | grep -E '\.mp4' | head -n 1 || true)
+            if [ -z "$u" ]; then u=$(jq -r '.. | strings? | select(startswith("http"))' "$1" 2>/dev/null | grep -i 'video' | head -n 1 || true); fi
+            if [ -z "$u" ]; then u=$(jq -r '.. | strings? | select(startswith("http"))' "$1" 2>/dev/null | grep -iE 'download|output|result' | head -n 1 || true); fi
+            printf '%s' "$u"
+          }
+          find_task_id() {
+            jq -r '.task_id // .taskId // .data.task_id // .data.taskId // .data.id // .id // empty' "$1" 2>/dev/null || true
+          }
+          download_video() {
+            local url="$1"
+            curl -s -L -m 120 -o probe/test-clip.mp4 -H "Authorization: Bearer $NICEAI_KEY" -H "User-Agent: $UA" "$url" || true
+            if [ ! -s probe/test-clip.mp4 ]; then curl -s -L -m 120 -o probe/test-clip.mp4 -H "User-Agent: $UA" "$url" || true; fi
+            if [ -s probe/test-clip.mp4 ]; then
+              log "DOWNLOADED probe/test-clip.mp4: $(stat -c%s probe/test-clip.mp4) bytes"
+              file probe/test-clip.mp4 | tee -a probe/log.txt || true
+              if command -v ffprobe >/dev/null 2>&1; then ffprobe -v error -show_entries format=duration,size -of default=noprint_wrappers=1 probe/test-clip.mp4 | tee -a probe/log.txt || true; fi
+            else
+              log "DOWNLOAD FAILED for $url"
+            fi
+          }
+          if [ -z "$NICEAI_KEY" ]; then log "ERROR: NICEAI_KEY is empty"; else log "NICEAI_KEY present (value not printed)"; fi
+          command -v jq >/dev/null 2>&1 || log "WARNING: jq not found"
+          command -v curl >/dev/null 2>&1 || log "WARNING: curl not found"
+          # Step 1: GET /v1/models with curl, like the working workflows
+          HTTP_MODELS=$(curl -s -m 60 -o probe/models.json -w "%{http_code}" -H "Authorization: Bearer $NICEAI_KEY" -H "User-Agent: $UA" "$BASE/models" || true)
+          log "GET /v1/models -> $HTTP_MODELS: $(head -c 1000 probe/models.json)"
+          log "MODEL_IDS:"
+          jq -r '.data[]?.id // empty' probe/models.json 2>/dev/null | while IFS= read -r MID; do [ -n "$MID" ] && log "  - $MID"; done
+          MODEL_COUNT=$(jq -r '.data[]?.id // empty' probe/models.json 2>/dev/null | wc -l | tr -d ' ')
+          if [ "$MODEL_COUNT" = "0" ] || [ -z "$MODEL_COUNT" ]; then
+            jq -r '.[]?.id // empty' probe/models.json 2>/dev/null | while IFS= read -r MID; do [ -n "$MID" ] && log "  - $MID"; done
+            MODEL_COUNT=$(jq -r '.[]?.id // empty' probe/models.json 2>/dev/null | wc -l | tr -d ' ')
+          fi
+          log "MODEL_COUNT: $MODEL_COUNT"
+          if [ "$MODEL_COUNT" = "0" ] || [ -z "$MODEL_COUNT" ]; then log "MODEL_IDS: none parsed from /v1/models response"; fi
+          # Step 2: generation attempts with curl only, in order, stop at first task id / video URL
+          for N in 1 2 3 4 5; do
+            case $N in
+              1) API_PATH="/v1/videos/generations"; MODEL="seedance-2.5"; jq -n --arg prompt "$PROMPT" '{model: "seedance-2.5", prompt: $prompt, duration: 5, resolution: "480p", aspect_ratio: "9:16"}' > probe/req.json ;;
+              2) API_PATH="/v1/videos/generations"; MODEL="seedance-2-5"; jq -n --arg prompt "$PROMPT" '{model: "seedance-2-5", prompt: $prompt, duration: 5, resolution: "480p", aspect_ratio: "9:16"}' > probe/req.json ;;
+              3) API_PATH="/v1/video/generations"; MODEL="seedance-2.5"; jq -n --arg prompt "$PROMPT" '{model: "seedance-2.5", prompt: $prompt, duration: 5, resolution: "480p", aspect_ratio: "9:16"}' > probe/req.json ;;
+              4) API_PATH="/v1/contents/generations/tasks"; MODEL="doubao-seedance-2-5"; jq -n --arg prompt "$PROMPT" '{model: "doubao-seedance-2-5", content: [{type: "text", text: $prompt}], ratio: "9:16", duration: 5, resolution: "480p"}' > probe/req.json ;;
+              5) API_PATH="/v1/chat/completions"; MODEL="seedance-2.5"; jq -n --arg prompt "$PROMPT" '{model: "seedance-2.5", messages: [{role: "user", content: $prompt}]}' > probe/req.json ;;
+            esac
+            HTTP=$(curl -s -m 60 -o "probe/attempt-$N.json" -w "%{http_code}" -X POST -H "Authorization: Bearer $NICEAI_KEY" -H "User-Agent: $UA" -H "Content-Type: application/json" -d @probe/req.json "$BASE$API_PATH" || true)
+            log "ATTEMPT $N POST $API_PATH model=$MODEL -> $HTTP: $(head -c 1000 "probe/attempt-$N.json")"
+            VIDEO_URL=$(find_video_url "probe/attempt-$N.json")
+            if [ -n "$VIDEO_URL" ]; then log "VIDEO_URL found in attempt $N: $VIDEO_URL"; download_video "$VIDEO_URL"; break; fi
+            if [ "$N" -lt 5 ]; then
+              TASK_ID=$(find_task_id "probe/attempt-$N.json")
+              if [ -n "$TASK_ID" ]; then log "TASK_ID found in attempt $N: $TASK_ID"; break; fi
+            fi
+          done
+          # Step 3: poll for the task, if any, every 20s for up to 15 minutes
+          if [ -n "$TASK_ID" ] && [ -z "$VIDEO_URL" ]; then
+            END=$((SECONDS + 900))
+            TERMINAL=""
+            while [ "$SECONDS" -lt "$END" ] && [ -z "$VIDEO_URL" ] && [ -z "$TERMINAL" ]; do
+              for EP in "/v1/videos/generations/$TASK_ID" "/v1/videos/$TASK_ID" "/v1/contents/generations/tasks/$TASK_ID"; do
+                HTTP=$(curl -s -m 60 -o probe/poll.json -w "%{http_code}" -H "Authorization: Bearer $NICEAI_KEY" -H "User-Agent: $UA" "$BASE$EP" || true)
+                log "POLL GET $EP -> $HTTP: $(head -c 1000 probe/poll.json)"
+                VIDEO_URL=$(find_video_url probe/poll.json)
+                if [ -n "$VIDEO_URL" ]; then log "VIDEO_URL found while polling: $VIDEO_URL"; download_video "$VIDEO_URL"; break; fi
+                ST=$(jq -r '.status // .data.status // .state // .data.state // empty' probe/poll.json 2>/dev/null || true)
+                case "$ST" in failed|error|cancelled|canceled) log "POLL terminal status: $ST"; TERMINAL=1 ;; esac
+                if [ -n "$TERMINAL" ]; then break; fi
+              done
+              if [ -z "$VIDEO_URL" ] && [ -z "$TERMINAL" ] && [ "$SECONDS" -lt "$END" ]; then sleep 20; fi
+            done
+            if [ -z "$VIDEO_URL" ]; then log "POLL finished: no video URL within 15 minutes"; fi
+          fi
+          if [ -z "$TASK_ID" ] && [ -z "$VIDEO_URL" ]; then log "RESULT: no generation attempt returned a task id or a video URL"; fi
+          if [ -s probe/test-clip.mp4 ]; then log "TEST_CLIP_SIZE_BYTES: $(stat -c%s probe/test-clip.mp4)"; fi
+          log "DONE"
 
       - name: Upload probe artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: niceai-seedance-probe
+          name: niceai-seedance-probe-v2
           path: probe/
           if-no-files-found: warn
