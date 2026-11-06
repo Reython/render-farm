@@ -1,0 +1,105 @@
+name: NiceAI Seedance 2.5 — PMU reference probe
+
+on:
+  workflow_dispatch:
+
+env:
+  BASE_URL: https://api.niceai.rest/v1
+  MODEL: seedance-2.5
+
+jobs:
+  ref2video:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Generate with reference_images
+        env:
+          NICEAI_KEY: ${{ secrets.NICEAI_KEY }}
+        run: |
+          python3 - <<'PYEOF'
+          import base64, json, subprocess, sys, time, os
+          def b64(p):
+              return "data:image/jpeg;base64," + base64.b64encode(open(p,'rb').read()).decode()
+          prompt = ("Vertical 9:16, anime style, cinematic lighting. The young man in @Image1 stands in a vast stone waiting hall, "
+                    "looking up as the tiny fairy girl in @Image2 hovers in the air before him with a mischievous grin, announcing the start of the game. "
+                    "Keep both characters' faces, hair and outfits exactly as in the reference images. "
+                    "Dialogue: Iselle says \"The Master has started the game. Try to survive, little heroes.\" "
+                    "No readable text anywhere. End on Han's calm, calculating stare.")
+          body = {"model": os.environ.get("MODEL","seedance-2.5"), "prompt": prompt, "seconds": 20,
+                  "size": "720x1280", "resolution": "720p", "aspect_ratio": "9:16", "generate_audio": True,
+                  "reference_images": [b64("pmu_refs/pmu_ref_han.jpg"), b64("pmu_refs/pmu_ref_iselle.jpg")]}
+          json.dump(body, open("body.json","w"))
+          print("body bytes:", os.path.getsize("body.json"))
+          PYEOF
+          curl -s -A "Mozilla/5.0" -X POST "$BASE_URL/videos" -H "Authorization: Bearer $NICEAI_KEY" -H "Content-Type: application/json" --data @body.json | tee create.json
+          VID=$(python3 -c "import json;d=json.load(open('create.json'));print(d.get('id') or d.get('data',{}).get('id') or '')")
+          echo "video id: $VID"
+          if [ -z "$VID" ]; then echo "NO ID — probe failed at create"; exit 1; fi
+          for i in $(seq 1 90); do
+            sleep 15
+            curl -s -A "Mozilla/5.0" "$BASE_URL/videos/$VID" -H "Authorization: Bearer $NICEAI_KEY" > status.json
+            ST=$(python3 -c "import json;print(json.load(open('status.json')).get('status',''))" 2>/dev/null || echo "?")
+            echo "poll $i: $ST"
+            if [ "$ST" = "completed" ] || [ "$ST" = "succeeded" ]; then break; fi
+            if [ "$ST" = "failed" ]; then cat status.json; exit 1; fi
+          done
+          URL=$(python3 -c "import json;d=json.load(open('status.json'));u=d.get('urls') or [];print(u[0] if u else '')")
+          if [ -n "$URL" ]; then curl -sL -A "Mozilla/5.0" "$URL" -o probe-ref.mp4; else curl -sL -A "Mozilla/5.0" "$BASE_URL/videos/$VID/content" -H "Authorization: Bearer $NICEAI_KEY" -o probe-ref.mp4; fi
+          ls -la probe-ref.mp4
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: niceai-pmu-probe-ref
+          path: |
+            probe-ref.mp4
+            create.json
+            status.json
+          if-no-files-found: warn
+
+  img2video:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Generate with first-frame image
+        env:
+          NICEAI_KEY: ${{ secrets.NICEAI_KEY }}
+        run: |
+          python3 - <<'PYEOF'
+          import base64, json, os
+          def b64(p):
+              return "data:image/jpeg;base64," + base64.b64encode(open(p,'rb').read()).decode()
+          prompt = ("Vertical 9:16, anime style, cinematic lighting. Animate this exact scene: summoned heroes stir and look around in the stone waiting hall "
+                    "as the tiny fairy hovers above them; slow camera push-in; keep every character's face and outfit exactly as in the starting image. "
+                    "Dialogue: Iselle says \"The Master has started the game. Try to survive, little heroes.\" No readable text anywhere.")
+          body = {"model": os.environ.get("MODEL","seedance-2.5"), "prompt": prompt, "seconds": 20,
+                  "size": "720x1280", "resolution": "720p", "aspect_ratio": "9:16", "generate_audio": True,
+                  "image": b64("pmu_refs/pmu_ref_hall.jpg")}
+          json.dump(body, open("body.json","w"))
+          print("body bytes:", os.path.getsize("body.json"))
+          PYEOF
+          curl -s -A "Mozilla/5.0" -X POST "$BASE_URL/videos" -H "Authorization: Bearer $NICEAI_KEY" -H "Content-Type: application/json" --data @body.json | tee create.json
+          VID=$(python3 -c "import json;d=json.load(open('create.json'));print(d.get('id') or d.get('data',{}).get('id') or '')")
+          echo "video id: $VID"
+          if [ -z "$VID" ]; then echo "NO ID — probe failed at create"; exit 1; fi
+          for i in $(seq 1 90); do
+            sleep 15
+            curl -s -A "Mozilla/5.0" "$BASE_URL/videos/$VID" -H "Authorization: Bearer $NICEAI_KEY" > status.json
+            ST=$(python3 -c "import json;print(json.load(open('status.json')).get('status',''))" 2>/dev/null || echo "?")
+            echo "poll $i: $ST"
+            if [ "$ST" = "completed" ] || [ "$ST" = "succeeded" ]; then break; fi
+            if [ "$ST" = "failed" ]; then cat status.json; exit 1; fi
+          done
+          URL=$(python3 -c "import json;d=json.load(open('status.json'));u=d.get('urls') or [];print(u[0] if u else '')")
+          if [ -n "$URL" ]; then curl -sL -A "Mozilla/5.0" "$URL" -o probe-img.mp4; else curl -sL -A "Mozilla/5.0" "$BASE_URL/videos/$VID/content" -H "Authorization: Bearer $NICEAI_KEY" -o probe-img.mp4; fi
+          ls -la probe-img.mp4
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: niceai-pmu-probe-img
+          path: |
+            probe-img.mp4
+            create.json
+            status.json
+          if-no-files-found: warn
