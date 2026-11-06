@@ -1,0 +1,108 @@
+name: NiceAI Seedance 2.5 — PMU merged first/last-frame generation (v3)
+
+on:
+  workflow_dispatch:
+    inputs:
+      json_file:
+        description: "Prompts JSON in repo root (array of {clip, prompt, first_frame?, last_frame?})"
+        required: true
+        type: string
+      frames_zip:
+        description: "Zip with frame images in repo root"
+        required: true
+        type: string
+      prefix:
+        description: "Artifact prefix, e.g. pmu3-ep1"
+        required: true
+        type: string
+
+env:
+  BASE_URL: https://api.niceai.rest/v1
+  MODEL: seedance-2.5
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      clips: ${{ steps.list.outputs.clips }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: list
+        env:
+          JSON_FILE: ${{ inputs.json_file }}
+        run: |
+          CLIPS=$(python3 -c "import json,os; d=json.load(open(os.environ['JSON_FILE'])); print(json.dumps([e['clip'] for e in d]))")
+          echo "clips=$CLIPS" >> "$GITHUB_OUTPUT"
+          echo "clip list: $CLIPS"
+
+  gen:
+    needs: setup
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix:
+        clip: ${{ fromJSON(needs.setup.outputs.clips) }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Unzip frames
+        run: unzip -o "${{ inputs.frames_zip }}" -d .
+      - name: Generate clip ${{ matrix.clip }}
+        env:
+          NICEAI_KEY: ${{ secrets.NICEAI_KEY }}
+          CLIP: ${{ matrix.clip }}
+          JSON_FILE: ${{ inputs.json_file }}
+          PREFIX: ${{ inputs.prefix }}
+        run: |
+          python3 - <<'PYEOF'
+          import base64, json, os, sys
+          clip = int(os.environ["CLIP"])
+          data = json.load(open(os.environ["JSON_FILE"]))
+          entry = next((e for e in data if e["clip"] == clip), None)
+          if entry is None:
+              print(f"NO ENTRY for clip {clip}"); sys.exit(1)
+          body = {"model": "seedance-2.5", "prompt": entry["prompt"], "seconds": 20,
+                  "size": "720x1280", "resolution": "720p", "aspect_ratio": "9:16", "generate_audio": True}
+          for key in ("first_frame", "last_frame"):
+              f = entry.get(key)
+              if f:
+                  body[key] = "data:image/jpeg;base64," + base64.b64encode(open(f,'rb').read()).decode()
+                  print(key, ":", f)
+          json.dump(body, open("body.json","w"))
+          print("clip", clip, "prompt chars:", len(entry["prompt"]), "body bytes:", os.path.getsize("body.json"))
+          PYEOF
+          OK=""
+          for TRY in 1 2 3; do
+            echo "=== attempt $TRY"
+            curl -s -A "Mozilla/5.0" -X POST "$BASE_URL/videos" -H "Authorization: Bearer $NICEAI_KEY" -H "Content-Type: application/json" --data @body.json | tee create.json
+            VID=$(python3 -c "import json;d=json.load(open('create.json'));print(d.get('id') or '')")
+            if [ -z "$VID" ]; then echo "NO ID"; sleep 5; continue; fi
+            echo "video id: $VID"
+            for i in $(seq 1 90); do
+              sleep 15
+              curl -s -A "Mozilla/5.0" "$BASE_URL/videos/$VID" -H "Authorization: Bearer $NICEAI_KEY" > status.json
+              ST=$(python3 -c "import json;print(json.load(open('status.json')).get('status',''))" 2>/dev/null || echo "?")
+              echo "poll $i: $ST"
+              if [ "$ST" = "completed" ] || [ "$ST" = "succeeded" ]; then OK=1; break; fi
+              if [ "$ST" = "failed" ]; then cat status.json; break; fi
+            done
+            if [ -n "$OK" ]; then
+              URL=$(python3 -c "import json;d=json.load(open('status.json'));u=d.get('urls') or [];print(u[0] if u else '')")
+              if [ -n "$URL" ]; then curl -sL -A "Mozilla/5.0" "$URL" -o "clip.mp4"; else curl -sL -A "Mozilla/5.0" "$BASE_URL/videos/$VID/content" -H "Authorization: Bearer $NICEAI_KEY" -o "clip.mp4"; fi
+              ls -la clip.mp4 && break
+            fi
+            sleep 5
+          done
+          if [ -z "$OK" ]; then echo "ERROR: clip $CLIP not created in 3 attempts"; exit 1; fi
+          mv clip.mp4 "${PREFIX}-clip-${CLIP}.mp4"
+          ls -la "${PREFIX}-clip-${CLIP}.mp4"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: niceai-${{ inputs.prefix }}-clip-${{ matrix.clip }}
+          path: |
+            ${{ inputs.prefix }}-clip-${{ matrix.clip }}.mp4
+            create.json
+            status.json
+          if-no-files-found: warn
