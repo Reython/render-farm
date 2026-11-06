@@ -1,0 +1,159 @@
+# Regen S2E3 chained clips (frame-chain) — the main run 42150138027 generated all 13
+# chained clips WITHOUT first_frame: step "Извлечь последний кадр" failed on every
+# chained job with "ffmpeg: command not found" (exit 127), because ffmpeg is not
+# installed on ubuntu-latest. This workflow installs ffmpeg first, then regenerates
+# the 13 chained clips with real first_frame chaining.
+# Chain1 predecessors come from run 42150138027 (stage A videos), except clip 20
+# whose predecessor clip 19 comes from retry run 42158300336. Chain2 predecessors
+# come from this run's own chain1 outputs. Artifacts are named niceai-s2e3-clip-N-chain
+# to distinguish them from the unchained versions of run 42150138027.
+name: NiceAI Seedance 2.5 — Season 2 Episode 3 regen chain (ffmpeg fix)
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  gen_chain1:
+    name: gen_chain1 (clip ${{ matrix.clip }} <- ${{ matrix.prev }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 200
+    strategy:
+      fail-fast: false
+      max-parallel: 5
+      matrix:
+        include:
+          - { clip: 2, prev: 1, run_id: 42150138027 }
+          - { clip: 4, prev: 3, run_id: 42150138027 }
+          - { clip: 8, prev: 7, run_id: 42150138027 }
+          - { clip: 10, prev: 9, run_id: 42150138027 }
+          - { clip: 13, prev: 12, run_id: 42150138027 }
+          - { clip: 16, prev: 15, run_id: 42150138027 }
+          - { clip: 20, prev: 19, run_id: 42158300336 }
+          - { clip: 26, prev: 25, run_id: 42150138027 }
+          - { clip: 28, prev: 27, run_id: 42150138027 }
+          - { clip: 30, prev: 29, run_id: 42150138027 }
+    env:
+      BASE_URL: https://api.niceai.rest/v1
+      USER_AGENT: Mozilla/5.0
+    steps:
+      - name: Checkout репозитория (S2_EPISODE3_SCRIPT.md)
+        uses: actions/checkout@v4
+      - name: Скачать видео предшественника (clip ${{ matrix.prev }})
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: niceai-s2e3-clip-${{ matrix.prev }}
+          path: prev
+          run-id: ${{ matrix.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Установить ffmpeg (нужен для извлечения кадра)
+        shell: bash
+        run: |
+          if command -v ffmpeg >/dev/null 2>&1; then
+            echo "ffmpeg уже установлен: $(ffmpeg -version | head -n 1)"
+          else
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq ffmpeg
+            ffmpeg -version | head -n 1
+          fi
+      - name: Извлечь последний кадр предшественника (first_frame)
+        continue-on-error: true
+        run: |
+          PREV_MP4="prev/s2e3-clip-${{ matrix.prev }}.mp4"
+          if [ -f "$PREV_MP4" ]; then
+            echo "Predecessor video: $PREV_MP4"
+            ls -lh "$PREV_MP4"
+            ffmpeg -y -sseof -1 -i "$PREV_MP4" -vf scale=720:1280 -frames:v 1 -q:v 2 first_frame.jpg && ls -lh first_frame.jpg && file first_frame.jpg
+          else
+            echo "Предупреждение: видео предшественника $PREV_MP4 не найдено — генерация без first_frame"
+          fi
+      - name: Генерация клипа с first_frame (до 4 попыток, fallback при copyright-фильтре, опрос, скачивание)
+        shell: bash
+        env:
+          NICEAI_KEY: ${{ secrets.NICEAI_KEY }}
+          SCRIPT_FILE: S2_EPISODE3_SCRIPT.md
+          PREFIX: s2e3
+          CLIP_N: ${{ matrix.clip }}
+        run: bash scripts/niceai-gen-clip.sh
+      - name: Загрузить артефакт niceai-s2e3-clip-N-chain
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: niceai-s2e3-clip-${{ matrix.clip }}-chain
+          path: |
+            s2e3-clip-${{ matrix.clip }}.log
+            create.json
+            status.json
+            body.json
+            first_frame.jpg
+            s2e3-clip-${{ matrix.clip }}.mp4
+          if-no-files-found: warn
+  gen_chain2:
+    name: gen_chain2 (clip ${{ matrix.clip }} <- ${{ matrix.prev }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 200
+    needs: gen_chain1
+    if: always()
+    strategy:
+      fail-fast: false
+      max-parallel: 5
+      matrix:
+        include:
+          - { clip: 5, prev: 4 }
+          - { clip: 14, prev: 13 }
+          - { clip: 21, prev: 20 }
+    env:
+      BASE_URL: https://api.niceai.rest/v1
+      USER_AGENT: Mozilla/5.0
+    steps:
+      - name: Checkout репозитория (S2_EPISODE3_SCRIPT.md)
+        uses: actions/checkout@v4
+      - name: Скачать видео предшественника (clip ${{ matrix.prev }})
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: niceai-s2e3-clip-${{ matrix.prev }}-chain
+          path: prev
+      - name: Установить ffmpeg (нужен для извлечения кадра)
+        shell: bash
+        run: |
+          if command -v ffmpeg >/dev/null 2>&1; then
+            echo "ffmpeg уже установлен: $(ffmpeg -version | head -n 1)"
+          else
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq ffmpeg
+            ffmpeg -version | head -n 1
+          fi
+      - name: Извлечь последний кадр предшественника (first_frame)
+        continue-on-error: true
+        run: |
+          PREV_MP4="prev/s2e3-clip-${{ matrix.prev }}.mp4"
+          if [ -f "$PREV_MP4" ]; then
+            echo "Predecessor video: $PREV_MP4"
+            ls -lh "$PREV_MP4"
+            ffmpeg -y -sseof -1 -i "$PREV_MP4" -vf scale=720:1280 -frames:v 1 -q:v 2 first_frame.jpg && ls -lh first_frame.jpg && file first_frame.jpg
+          else
+            echo "Предупреждение: видео предшественника $PREV_MP4 не найдено — генерация без first_frame"
+          fi
+      - name: Генерация клипа с first_frame (до 4 попыток, fallback при copyright-фильтре, опрос, скачивание)
+        shell: bash
+        env:
+          NICEAI_KEY: ${{ secrets.NICEAI_KEY }}
+          SCRIPT_FILE: S2_EPISODE3_SCRIPT.md
+          PREFIX: s2e3
+          CLIP_N: ${{ matrix.clip }}
+        run: bash scripts/niceai-gen-clip.sh
+      - name: Загрузить артефакт niceai-s2e3-clip-N-chain
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: niceai-s2e3-clip-${{ matrix.clip }}-chain
+          path: |
+            s2e3-clip-${{ matrix.clip }}.log
+            create.json
+            status.json
+            body.json
+            first_frame.jpg
+            s2e3-clip-${{ matrix.clip }}.mp4
+          if-no-files-found: warn
