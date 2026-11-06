@@ -1,0 +1,76 @@
+# Season 2 Episode 4, retry клипа 3 (перефразировка v1).
+# Клип 3 упал в основном запуске 42170903463 за 4 попытки (2 дословные + 2 смягчённые),
+# все — на copyright-фильтре: {"message":"The request failed because the output video may be related to copyright restrictions."}
+# Перефразировка v1: переписаны только режиссура/описание сцены/камера/финал; диалоги и блоки
+# персонажей — дословно; добавлен суффикс "original fictional scene, no copyrighted characters."
+# Канонический S2_EPISODE4_SCRIPT.md не трогается — патчится копия S2_EPISODE4_SCRIPT_3B.md.
+name: NiceAI Seedance 2.5 — Season 2 Episode 4 retry (clip 3, paraphrased)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  gen:
+    name: gen (clip 3, paraphrased)
+    runs-on: ubuntu-latest
+    timeout-minutes: 200
+    env:
+      BASE_URL: https://api.niceai.rest/v1
+      USER_AGENT: Mozilla/5.0
+    steps:
+      - name: Checkout репозитория (S2_EPISODE4_SCRIPT.md)
+        uses: actions/checkout@v4
+      - name: Перефразировать промпт клипа 3 (только повествование)
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          src = open('S2_EPISODE4_SCRIPT.md', encoding='utf-8').read()
+          start = src.index('## CLIP 3 ')
+          end = src.index('## CLIP 4 ', start)
+          section = src[start:end]
+          repl = [
+            ("Ava Sterling's office, hard white daylight.",
+             "Ava Sterling's office in bright, hard morning light."),
+            ("A wall screen shows Margaret's blurred silhouette, its back to camera; only Ava Sterling's and Alexander Sterling's faces read the moment.",
+             "On the wall, a screen shows Margaret as a blurred silhouette seen from behind; the moment registers only on the faces of Ava Sterling and Alexander Sterling."),
+            ("Camera: slow push-in on Ava's face.",
+             "Camera: the shot moves in slowly toward Ava's face."),
+            ("No readable text, screen content blurred beyond recognition.",
+             "No readable text; what the screen shows stays blurred beyond recognition."),
+            ("End mid-tension on Ava turning from the screen, decided.",
+             "End on the held tension of Ava turning away from the screen, her mind made up. original fictional scene, no copyrighted characters."),
+          ]
+          for old, new in repl:
+              n = section.count(old)
+              assert n == 1, "ожидалось 1 вхождение, найдено %d: %s" % (n, old[:60])
+              section = section.replace(old, new)
+          assert "her mind made up. original fictional scene, no copyrighted characters." in section
+          out = src[:start] + section + src[end:]
+          open('S2_EPISODE4_SCRIPT_3B.md', 'w', encoding='utf-8').write(out)
+          prompt = section.split('**Seedance Prompt:**', 1)[1].strip().split('\n\n', 1)[0].strip()
+          print("PARAPHRASED_LEN=%d" % len(prompt))
+          print("PARAPHRASED_HEAD=%s" % prompt[:120])
+          PY
+      - name: Генерация клипа (до 4 попыток, fallback при copyright-фильтре, опрос, скачивание)
+        env:
+          NICEAI_KEY: ${{ secrets.NICEAI_KEY }}
+          SCRIPT_FILE: S2_EPISODE4_SCRIPT_3B.md
+          PREFIX: s2e4
+          CLIP_N: 3
+        run: bash scripts/niceai-gen-clip.sh
+      - name: Загрузить артефакт niceai-s2e4-clip-3
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: niceai-s2e4-clip-3
+          path: |
+            prompt.txt
+            s2e4-clip-3.log
+            create.json
+            status.json
+            body.json
+            s2e4-clip-3.mp4
+          if-no-files-found: warn
