@@ -1,0 +1,38 @@
+name: Verify S2E4 Clip 27 Decode
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: "Run ID с артефактом niceai-s2e4-clip-27"
+        required: true
+        default: "42197709665"
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Download artifact niceai-s2e4-clip-27
+        uses: actions/download-artifact@v4
+        with:
+          name: niceai-s2e4-clip-27
+          run-id: ${{ inputs.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install ffmpeg
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+      - name: Full decode check (ffmpeg frame count)
+        run: |
+          ls -l
+          echo "--- ffprobe (metadata) ---"
+          ffprobe -v error -show_entries stream=codec_name,width,height,r_frame_rate,duration -show_entries format=duration,size -of default=noprint_wrappers=1 s2e4-clip-27.mp4
+          echo "--- full decode: ffmpeg to null (fails on corrupt frames) ---"
+          ffmpeg -v error -i s2e4-clip-27.mp4 -map 0:v:0 -f null -
+          FRAMES=$(ffprobe -v error -count_frames -select_streams v:0 -show_entries stream=nb_read_frames -of csv=p=0 s2e4-clip-27.mp4)
+          echo "DECODED_FRAMES=$FRAMES (expected 481)"
+          if [ "$FRAMES" != "481" ]; then echo "::error::Decoded frames $FRAMES != 481 — file is corrupt/short"; exit 1; fi
+          echo "OK: 481 frames fully decode"
