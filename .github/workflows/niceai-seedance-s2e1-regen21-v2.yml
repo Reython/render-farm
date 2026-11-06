@@ -1,0 +1,63 @@
+# Regen S2E1 clip 21 v2 — QA rejected the v1 replacement (Adrian drifted: mostly-silver
+# hair, light stubble, reads ~55). Locked Adrian: mid-40s, dark hair with grey ONLY at
+# the temples, clean-shaven. Same scene/dialogue from S2_EPISODE1_SCRIPT.md, plus the
+# strengthened ADRIAN VALE description injected verbatim into the clip 21 prompt
+# (patched script copy only; the canonical script is untouched).
+name: NiceAI Seedance 2.5 — Season 2 Episode 1 regen (clip 21, v2, Adrian lock)
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  gen:
+    name: gen (clip 21, v2)
+    runs-on: ubuntu-latest
+    timeout-minutes: 200
+    env:
+      BASE_URL: https://api.niceai.rest/v1
+      USER_AGENT: Mozilla/5.0
+    steps:
+      - name: Checkout репозитория
+        uses: actions/checkout@v4
+      - name: Усилить описание Эдриана в промпте клипа 21
+        shell: bash
+        run: |
+          cp S2_EPISODE1_SCRIPT.md S2_EPISODE1_SCRIPT_21B.md
+          python3 - <<'PY'
+          path = "S2_EPISODE1_SCRIPT_21B.md"
+          text = open(path, encoding="utf-8").read()
+          i = text.index("## CLIP 21 ")
+          j = text.index("Vertical 9:16", i)
+          k = text.index("\n\n", j)
+          para = text[j:k]
+          insert = ("ADRIAN VALE, a man in his mid-forties, lean face, dark brown hair "
+                    "with grey only at the temples, clean-shaven, no beard, wearing a long "
+                    "dark wool coat. The same man in every shot, mid-forties, youthful face. ")
+          marker = "consistent character appearance. "
+          assert marker in para, "opener marker not found in clip 21 prompt"
+          para2 = para.replace(marker, marker + insert, 1)
+          text = text[:j] + para2 + text[k:]
+          open(path, "w", encoding="utf-8").write(text)
+          print("PATCHED_LEN", len(para2))
+          print("PATCHED_HEAD", para2[:220])
+          PY
+          grep -c "ADRIAN VALE, a man in his mid-forties" S2_EPISODE1_SCRIPT_21B.md
+      - name: Генерация клипа 21 (до 4 попыток, fallback при copyright-фильтре, опрос, скачивание)
+        shell: bash
+        env:
+          NICEAI_KEY: ${{ secrets.NICEAI_KEY }}
+          SCRIPT_FILE: S2_EPISODE1_SCRIPT_21B.md
+          PREFIX: s2e1
+          CLIP_N: 21
+        run: bash scripts/niceai-gen-clip.sh
+      - name: Загрузить артефакт niceai-s2e1-clip-21-v2
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: niceai-s2e1-clip-21-v2
+          path: |
+            s2e1-clip-21.log
+            create.json
+            status.json
+            body.json
+            s2e1-clip-21.mp4
