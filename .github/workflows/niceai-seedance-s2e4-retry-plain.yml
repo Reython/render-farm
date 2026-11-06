@@ -1,0 +1,50 @@
+# Season 2 Episode 4 "Sterling Blood" — plain retry (10 клипов, упавших в основном запуске).
+# Обычная генерация без first_frame: клипы 2, 6, 9, 12, 14, 18, 30 упали на фильтре
+# приватности входного кадра (HTTP 400 InputImageSensitiveContentDetected.PrivacyInformation),
+# клипы 20 и 27 — падения основного запуска при plain/chained-генерации;
+# клип 3 закрыт отдельно retry2 (перефразировка v2).
+# Логика генерации — scripts/niceai-gen-clip.sh (та же проверенная спецификация: seedance-2.5,
+# 20 с, 720x1280, 9:16, generate_audio true; дословно, затем смягчённая версия при copyright-фильтре).
+name: NiceAI Seedance 2.5 — Season 2 Episode 4 retry plain (chain failures)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  gen:
+    name: gen (clip ${{ matrix.clip }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 200
+    strategy:
+      fail-fast: false
+      max-parallel: 5
+      matrix:
+        clip: [2, 6, 9, 12, 14, 18, 20, 26, 27, 30]
+    env:
+      BASE_URL: https://api.niceai.rest/v1
+      USER_AGENT: Mozilla/5.0
+    steps:
+      - name: Checkout репозитория (S2_EPISODE4_SCRIPT.md)
+        uses: actions/checkout@v4
+      - name: Генерация клипа (до 4 попыток, fallback при copyright-фильтре, опрос, скачивание)
+        env:
+          NICEAI_KEY: ${{ secrets.NICEAI_KEY }}
+          SCRIPT_FILE: S2_EPISODE4_SCRIPT.md
+          PREFIX: s2e4
+          CLIP_N: ${{ matrix.clip }}
+        run: bash scripts/niceai-gen-clip.sh
+      - name: Загрузить артефакт niceai-s2e4-clip-N
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: niceai-s2e4-clip-${{ matrix.clip }}
+          path: |
+            s2e4-clip-${{ matrix.clip }}.log
+            create.json
+            status.json
+            body.json
+            s2e4-clip-${{ matrix.clip }}.mp4
+          if-no-files-found: warn
