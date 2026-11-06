@@ -21,6 +21,11 @@
 # run 42164625077 clip 4: step "Установить ffmpeg" stuck 12-28 min on apt-get update). The install step
 # now has timeouts (120s update / 300s install, with retries) and never hangs or fails the job: if ffmpeg
 # stays unavailable, generation falls back to plain (the extraction step has continue-on-error).
+# UPDATE 5: apt is UNRELIABLE on runners — in run 42166150414 the ffmpeg install failed silently on some
+# runners (no hang, no error — install just never produced ffmpeg), and 3 of 4 chain1 "successes"
+# (clips 2, 4, 8) were plain (FIRST_FRAME=none, extraction exit 127). Only clip 28 was truly chained.
+# Install now downloads the static ffmpeg build first (johnvansickle.com, ~30 MB), apt (with timeouts)
+# only as a fallback, so extraction stops being a per-runner lottery.
 name: NiceAI Seedance 2.5 — Season 2 Episode 3 regen chain (ffmpeg fix)
 on:
   workflow_dispatch:
@@ -67,16 +72,28 @@ jobs:
           if command -v ffmpeg >/dev/null 2>&1; then
             echo "ffmpeg уже установлен: $(ffmpeg -version | head -n 1)"
           else
-            echo "ffmpeg не найден, устанавливаю (apt с таймаутами, чтобы не зависать)..."
-            for attempt in 1 2 3; do
-              timeout 120 sudo apt-get update -qq && break || echo "apt-get update не удался (попытка $attempt)"
-              sleep 5
-            done
-            timeout 300 sudo apt-get install -y -qq ffmpeg || echo "Предупреждение: установить ffmpeg не удалось — генерация пойдёт без first_frame"
-            if command -v ffmpeg >/dev/null 2>&1; then
+            echo "ffmpeg не найден, скачиваю статическую сборку..."
+            STATIC_OK=0
+            if curl -fsSL --max-time 120 -o /tmp/ffmpeg.tar.xz "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz" && tar -xJf /tmp/ffmpeg.tar.xz -C /tmp; then
+              if sudo install -m 755 /tmp/ffmpeg-*-amd64-static/ffmpeg /usr/local/bin/ffmpeg; then
+                STATIC_OK=1
+              fi
+            fi
+            if [ "$STATIC_OK" = "1" ]; then
+              echo "Статическая сборка ffmpeg установлена:"
               ffmpeg -version | head -n 1
             else
-              echo "ffmpeg недоступен — генерация без first_frame"
+              echo "Статическая сборка недоступна, пробую apt (с таймаутами)..."
+              for attempt in 1 2 3; do
+                timeout 120 sudo apt-get update -qq && break || echo "apt-get update не удался (попытка $attempt)"
+                sleep 5
+              done
+              timeout 300 sudo apt-get install -y -qq ffmpeg || echo "Предупреждение: установить ffmpeg не удалось — генерация пойдёт без first_frame"
+              if command -v ffmpeg >/dev/null 2>&1; then
+                ffmpeg -version | head -n 1
+              else
+                echo "ffmpeg недоступен — генерация без first_frame"
+              fi
             fi
           fi
       - name: Извлечь кадр предшественника (10-я секунда, first_frame)
@@ -143,16 +160,28 @@ jobs:
           if command -v ffmpeg >/dev/null 2>&1; then
             echo "ffmpeg уже установлен: $(ffmpeg -version | head -n 1)"
           else
-            echo "ffmpeg не найден, устанавливаю (apt с таймаутами, чтобы не зависать)..."
-            for attempt in 1 2 3; do
-              timeout 120 sudo apt-get update -qq && break || echo "apt-get update не удался (попытка $attempt)"
-              sleep 5
-            done
-            timeout 300 sudo apt-get install -y -qq ffmpeg || echo "Предупреждение: установить ffmpeg не удалось — генерация пойдёт без first_frame"
-            if command -v ffmpeg >/dev/null 2>&1; then
+            echo "ffmpeg не найден, скачиваю статическую сборку..."
+            STATIC_OK=0
+            if curl -fsSL --max-time 120 -o /tmp/ffmpeg.tar.xz "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz" && tar -xJf /tmp/ffmpeg.tar.xz -C /tmp; then
+              if sudo install -m 755 /tmp/ffmpeg-*-amd64-static/ffmpeg /usr/local/bin/ffmpeg; then
+                STATIC_OK=1
+              fi
+            fi
+            if [ "$STATIC_OK" = "1" ]; then
+              echo "Статическая сборка ffmpeg установлена:"
               ffmpeg -version | head -n 1
             else
-              echo "ffmpeg недоступен — генерация без first_frame"
+              echo "Статическая сборка недоступна, пробую apt (с таймаутами)..."
+              for attempt in 1 2 3; do
+                timeout 120 sudo apt-get update -qq && break || echo "apt-get update не удался (попытка $attempt)"
+                sleep 5
+              done
+              timeout 300 sudo apt-get install -y -qq ffmpeg || echo "Предупреждение: установить ffmpeg не удалось — генерация пойдёт без first_frame"
+              if command -v ffmpeg >/dev/null 2>&1; then
+                ffmpeg -version | head -n 1
+              else
+                echo "ffmpeg недоступен — генерация без first_frame"
+              fi
             fi
           fi
       - name: Извлечь кадр предшественника (10-я секунда, first_frame)
