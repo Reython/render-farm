@@ -12,6 +12,11 @@
 # UPDATE 2: 360x640 did NOT lift the filter — run 42161413938, clip 4 still HTTP 400 PrivacyInformation
 # on 3/3 attempts (FIRST_FRAME=19441 bytes). Now taking the frame 3 seconds before the end (-sseof -3),
 # which may avoid the face close-up in the final shot.
+# UPDATE 3: -sseof -3 rescued only 2/10 in run 42162198037 (clips 2, 20); the rest still HTTP 400
+# PrivacyInformation — the -3s frame is the same final shot as the last frame. The privacy filter is
+# noisy per attempt (run 42162198037 clip 10: attempts 1,2,4 = HTTP 400, attempt 3 = HTTP 200, then the
+# task failed on the copyright filter). Now taking the frame from the middle of the predecessor clip
+# (-ss 10), a different shot, most likely a non-face composition.
 name: NiceAI Seedance 2.5 — Season 2 Episode 3 regen chain (ffmpeg fix)
 on:
   workflow_dispatch:
@@ -62,14 +67,14 @@ jobs:
             sudo apt-get install -y -qq ffmpeg
             ffmpeg -version | head -n 1
           fi
-      - name: Извлечь кадр предшественника (3 с до конца, first_frame)
+      - name: Извлечь кадр предшественника (10-я секунда, first_frame)
         continue-on-error: true
         run: |
           PREV_MP4="prev/s2e3-clip-${{ matrix.prev }}.mp4"
           if [ -f "$PREV_MP4" ]; then
             echo "Predecessor video: $PREV_MP4"
             ls -lh "$PREV_MP4"
-            ffmpeg -y -sseof -3 -i "$PREV_MP4" -vf scale=360:640 -frames:v 1 -q:v 4 first_frame.jpg && ls -lh first_frame.jpg && file first_frame.jpg
+            ffmpeg -y -i "$PREV_MP4" -ss 10 -vf scale=360:640 -frames:v 1 -q:v 4 first_frame.jpg && ls -lh first_frame.jpg && file first_frame.jpg
           else
             echo "Предупреждение: видео предшественника $PREV_MP4 не найдено — генерация без first_frame"
           fi
@@ -130,14 +135,14 @@ jobs:
             sudo apt-get install -y -qq ffmpeg
             ffmpeg -version | head -n 1
           fi
-      - name: Извлечь кадр предшественника (3 с до конца, first_frame)
+      - name: Извлечь кадр предшественника (10-я секунда, first_frame)
         continue-on-error: true
         run: |
           PREV_MP4="prev/s2e3-clip-${{ matrix.prev }}.mp4"
           if [ -f "$PREV_MP4" ]; then
             echo "Predecessor video: $PREV_MP4"
             ls -lh "$PREV_MP4"
-            ffmpeg -y -sseof -3 -i "$PREV_MP4" -vf scale=360:640 -frames:v 1 -q:v 4 first_frame.jpg && ls -lh first_frame.jpg && file first_frame.jpg
+            ffmpeg -y -i "$PREV_MP4" -ss 10 -vf scale=360:640 -frames:v 1 -q:v 4 first_frame.jpg && ls -lh first_frame.jpg && file first_frame.jpg
           else
             echo "Предупреждение: видео предшественника $PREV_MP4 не найдено — генерация без first_frame"
           fi
