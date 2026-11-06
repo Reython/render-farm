@@ -9,6 +9,9 @@
 # to distinguish them from the unchained versions of run 42150138027.
 # UPDATE: first_frame is downscaled to 360x640 (q:v 4) — the upstream input-image privacy
 # filter (InputImageSensitiveContentDetected.PrivacyInformation) rejects 720x1280 face frames with HTTP 400.
+# UPDATE 2: 360x640 did NOT lift the filter — run 42161413938, clip 4 still HTTP 400 PrivacyInformation
+# on 3/3 attempts (FIRST_FRAME=19441 bytes). Now taking the frame 3 seconds before the end (-sseof -3),
+# which may avoid the face close-up in the final shot.
 name: NiceAI Seedance 2.5 — Season 2 Episode 3 regen chain (ffmpeg fix)
 on:
   workflow_dispatch:
@@ -59,14 +62,14 @@ jobs:
             sudo apt-get install -y -qq ffmpeg
             ffmpeg -version | head -n 1
           fi
-      - name: Извлечь последний кадр предшественника (first_frame)
+      - name: Извлечь кадр предшественника (3 с до конца, first_frame)
         continue-on-error: true
         run: |
           PREV_MP4="prev/s2e3-clip-${{ matrix.prev }}.mp4"
           if [ -f "$PREV_MP4" ]; then
             echo "Predecessor video: $PREV_MP4"
             ls -lh "$PREV_MP4"
-            ffmpeg -y -sseof -1 -i "$PREV_MP4" -vf scale=360:640 -frames:v 1 -q:v 4 first_frame.jpg && ls -lh first_frame.jpg && file first_frame.jpg
+            ffmpeg -y -sseof -3 -i "$PREV_MP4" -vf scale=360:640 -frames:v 1 -q:v 4 first_frame.jpg && ls -lh first_frame.jpg && file first_frame.jpg
           else
             echo "Предупреждение: видео предшественника $PREV_MP4 не найдено — генерация без first_frame"
           fi
@@ -127,14 +130,14 @@ jobs:
             sudo apt-get install -y -qq ffmpeg
             ffmpeg -version | head -n 1
           fi
-      - name: Извлечь последний кадр предшественника (first_frame)
+      - name: Извлечь кадр предшественника (3 с до конца, first_frame)
         continue-on-error: true
         run: |
           PREV_MP4="prev/s2e3-clip-${{ matrix.prev }}.mp4"
           if [ -f "$PREV_MP4" ]; then
             echo "Predecessor video: $PREV_MP4"
             ls -lh "$PREV_MP4"
-            ffmpeg -y -sseof -1 -i "$PREV_MP4" -vf scale=360:640 -frames:v 1 -q:v 4 first_frame.jpg && ls -lh first_frame.jpg && file first_frame.jpg
+            ffmpeg -y -sseof -3 -i "$PREV_MP4" -vf scale=360:640 -frames:v 1 -q:v 4 first_frame.jpg && ls -lh first_frame.jpg && file first_frame.jpg
           else
             echo "Предупреждение: видео предшественника $PREV_MP4 не найдено — генерация без first_frame"
           fi
