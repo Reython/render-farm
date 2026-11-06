@@ -5,14 +5,12 @@
 # Chained clips start from the predecessor's final frame (ffmpeg last frame -> first_frame data URI).
 # Generation logic lives in scripts/niceai-gen-clip.sh (same proven spec: seedance-2.5,
 # 20s, 720x1280, 9:16, generate_audio true; verbatim once, then softened on copyright filter).
+# NOTE: chained jobs install ffmpeg first — ubuntu-latest does not ship ffmpeg (exit 127 otherwise).
 name: NiceAI Seedance 2.5 — Season 2 Episode 3
-
 on:
   workflow_dispatch:
-
 permissions:
   contents: read
-
 jobs:
   gen:
     name: gen (clip ${{ matrix.clip }})
@@ -48,7 +46,6 @@ jobs:
             body.json
             s2e3-clip-${{ matrix.clip }}.mp4
           if-no-files-found: warn
-
   gen_chain1:
     name: gen_chain1 (clip ${{ matrix.clip }} <- ${{ matrix.prev }})
     runs-on: ubuntu-latest
@@ -82,6 +79,15 @@ jobs:
         with:
           name: niceai-s2e3-clip-${{ matrix.prev }}
           path: prev
+      - name: Установить ffmpeg (нужен для извлечения кадра)
+        run: |
+          if command -v ffmpeg >/dev/null 2>&1; then
+            echo "ffmpeg уже установлен: $(ffmpeg -version | head -n 1)"
+          else
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq ffmpeg
+            ffmpeg -version | head -n 1
+          fi
       - name: Извлечь последний кадр предшественника (first_frame)
         continue-on-error: true
         run: |
@@ -113,7 +119,6 @@ jobs:
             first_frame.jpg
             s2e3-clip-${{ matrix.clip }}.mp4
           if-no-files-found: warn
-
   gen_chain2:
     name: gen_chain2 (clip ${{ matrix.clip }} <- ${{ matrix.prev }})
     runs-on: ubuntu-latest
@@ -140,6 +145,15 @@ jobs:
         with:
           name: niceai-s2e3-clip-${{ matrix.prev }}
           path: prev
+      - name: Установить ffmpeg (нужен для извлечения кадра)
+        run: |
+          if command -v ffmpeg >/dev/null 2>&1; then
+            echo "ffmpeg уже установлен: $(ffmpeg -version | head -n 1)"
+          else
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq ffmpeg
+            ffmpeg -version | head -n 1
+          fi
       - name: Извлечь последний кадр предшественника (first_frame)
         continue-on-error: true
         run: |
