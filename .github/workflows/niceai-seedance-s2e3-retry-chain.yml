@@ -7,6 +7,8 @@
 # whose predecessor clip 19 comes from retry run 42158300336. Chain2 predecessors
 # come from this run's own chain1 outputs. Artifacts are named niceai-s2e3-clip-N-chain
 # to distinguish them from the unchained versions of run 42150138027.
+# UPDATE: first_frame is downscaled to 360x640 (q:v 4) — the upstream input-image privacy
+# filter (InputImageSensitiveContentDetected.PrivacyInformation) rejects 720x1280 face frames with HTTP 400.
 name: NiceAI Seedance 2.5 — Season 2 Episode 3 regen chain (ffmpeg fix)
 on:
   workflow_dispatch:
@@ -64,7 +66,7 @@ jobs:
           if [ -f "$PREV_MP4" ]; then
             echo "Predecessor video: $PREV_MP4"
             ls -lh "$PREV_MP4"
-            ffmpeg -y -sseof -1 -i "$PREV_MP4" -vf scale=720:1280 -frames:v 1 -q:v 2 first_frame.jpg && ls -lh first_frame.jpg && file first_frame.jpg
+            ffmpeg -y -sseof -1 -i "$PREV_MP4" -vf scale=360:640 -frames:v 1 -q:v 4 first_frame.jpg && ls -lh first_frame.jpg && file first_frame.jpg
           else
             echo "Предупреждение: видео предшественника $PREV_MP4 не найдено — генерация без first_frame"
           fi
@@ -132,7 +134,7 @@ jobs:
           if [ -f "$PREV_MP4" ]; then
             echo "Predecessor video: $PREV_MP4"
             ls -lh "$PREV_MP4"
-            ffmpeg -y -sseof -1 -i "$PREV_MP4" -vf scale=720:1280 -frames:v 1 -q:v 2 first_frame.jpg && ls -lh first_frame.jpg && file first_frame.jpg
+            ffmpeg -y -sseof -1 -i "$PREV_MP4" -vf scale=360:640 -frames:v 1 -q:v 4 first_frame.jpg && ls -lh first_frame.jpg && file first_frame.jpg
           else
             echo "Предупреждение: видео предшественника $PREV_MP4 не найдено — генерация без first_frame"
           fi
