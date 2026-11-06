@@ -1,0 +1,177 @@
+name: NiceAI Seedance 2.5 — Season 2 Episode 2 retry (clip 4)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  gen:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      max-parallel: 5
+      matrix:
+        clip: [4]
+    name: gen (clip ${{ matrix.clip }})
+    env:
+      NICEAI_KEY: ${{ secrets.NICEAI_KEY }}
+      CLIP: ${{ matrix.clip }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Generate clip with NiceAI Seedance 2.5 (retry: verbatim, then softened)
+        id: gen
+        run: |
+          set -e
+          SCRIPT="S2_EPISODE2_SCRIPT.md"
+          PROMPT=$(awk -v clip="$CLIP" '
+            BEGIN { in_clip=0; after_prompt=0; prompt="" }
+            /^## CLIP / { n=$3+0; if (n==clip) { in_clip=1 } else { in_clip=0 } next }
+            in_clip && /^\*\*Seedance Prompt:\*\*/ { after_prompt=1; next }
+            after_prompt && /^$/ { exit }
+            after_prompt && /^\*\*/ { exit }
+            after_prompt && /^## / { exit }
+            after_prompt { if (prompt=="") { prompt=$0 } else { prompt=prompt "\n" $0 } }
+            END { print prompt }
+          ' "$SCRIPT")
+          PROMPT_LEN=${#PROMPT}
+          echo "PROMPT_LEN=$PROMPT_LEN"
+          if [ "$PROMPT_LEN" -lt 200 ]; then
+            echo "ERROR: prompt for clip $CLIP too short or not found (len=$PROMPT_LEN)" >&2
+            exit 1
+          fi
+
+          post_video() {
+            local prompt_json="$1"
+            curl -s -X POST "https://api.niceai.rest/v1/videos" \
+              -H "User-Agent: Mozilla/5.0" \
+              -H "Authorization: Bearer $NICEAI_KEY" \
+              -H "Content-Type: application/json" \
+              -d "{\"model\":\"seedance-2.5\",\"prompt\":$prompt_json,\"seconds\":20,\"size\":\"720x1280\",\"resolution\":\"720p\",\"aspect_ratio\":\"9:16\",\"generate_audio\":true}"
+          }
+
+          poll_task() {
+            local id="$1"
+            local i=0
+            while [ $i -lt 160 ]; do
+              RESP=$(curl -s -H "User-Agent: Mozilla/5.0" -H "Authorization: Bearer $NICEAI_KEY" "https://api.niceai.rest/v1/videos/$id")
+              echo "$RESP"
+              STATUS=$(echo "$RESP" | grep -o '"status":"[a-z_]*"' | head -1 | cut -d'"' -f4)
+              if [ "$STATUS" = "completed" ]; then
+                URL=$(echo "$RESP" | grep -o '"urls":\[[^]]*\]' | grep -o 'https://[^"]*' | head -1)
+                if [ -z "$URL" ]; then
+                  URL="https://api.niceai.rest/v1/videos/$id/content"
+                fi
+                echo "Downloading video from $URL"
+                curl -s -L -H "User-Agent: Mozilla/5.0" -H "Authorization: Bearer $NICEAI_KEY" -o "s2e2-clip-$CLIP.mp4" "$URL"
+                ls -lh "s2e2-clip-$CLIP.mp4"
+                return 0
+              fi
+              if [ "$STATUS" = "failed" ]; then
+                if echo "$RESP" | grep -qi "copyright"; then
+                  echo "COPYRIGHT_FILTER"
+                else
+                  echo "TASK_FAILED"
+                fi
+                return 1
+              fi
+              i=$((i+1))
+              sleep 15
+            done
+            echo "POLL_TIMEOUT"
+            return 1
+          }
+
+          attempt() {
+            local prompt_text="$1"
+            local label="$2"
+            echo "=== Attempt $label ==="
+            PROMPT_JSON=$(printf '%s' "$prompt_text" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')
+            CREATE_RESP=$(post_video "$PROMPT_JSON" || true)
+            echo "$CREATE_RESP"
+            TASK_ID=$(echo "$CREATE_RESP" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
+            if [ -z "$TASK_ID" ]; then
+              echo "Submit failed (no task id); waiting 60s before next attempt"
+              sleep 60
+              return 1
+            fi
+            echo "Task id: $TASK_ID"
+            RESULT=$(poll_task "$TASK_ID" || true)
+            echo "$RESULT"
+            case "$RESULT" in
+              *COPYRIGHT_FILTER*) echo "copyright" ; return 2 ;;
+              *TASK_FAILED*) echo "failed" ; return 1 ;;
+              *POLL_TIMEOUT*) echo "timeout" ; return 1 ;;
+              *) return 0 ;;
+            esac
+          }
+
+          # Attempt 1: verbatim prompt
+          attempt "$PROMPT" "1 (verbatim)"; RC=$?
+          if [ $RC -eq 0 ]; then
+            echo "SUCCESS clip $CLIP on attempt 1 (verbatim)"
+            exit 0
+          fi
+          if [ $RC -eq 2 ]; then
+            echo "Copyright-фильтр: после 1 дословной повторной отправки переключаюсь на смягчённый промпт"
+          else
+            echo "Attempt 1 failed (rc=$RC); retrying verbatim once after 60s"
+            sleep 60
+            attempt "$PROMPT" "2 (verbatim)"; RC=$?
+            if [ $RC -eq 0 ]; then
+              echo "SUCCESS clip $CLIP on attempt 2 (verbatim)"
+              exit 0
+            fi
+          fi
+
+          # Softened prompt: keep scene, characters, dialogue; neutral stage directions
+          SOFTENED=$(printf '%s' "$PROMPT" | sed \
+            -e 's/divorce papers/documents/g' \
+            -e 's/divorced/separated/g' \
+            -e 's/divorcing/separating/g' \
+            -e 's/divorce/separation/g' \
+            -e 's/throws/places/g' \
+            -e 's/throw/place/g' \
+            -e 's/shouts/says firmly/g' \
+            -e 's/shout/say firmly/g' \
+            -e 's/screaming/speaking firmly/g' \
+            -e 's/screams/says firmly/g' \
+            -e 's/scream/say firmly/g' \
+            -e 's/humiliates/embarrasses/g' \
+            -e 's/humiliate/embarrass/g' \
+            -e 's/humiliating/embarrassing/g' \
+            -e 's/slaps/touches/g' \
+            -e 's/slap/touch/g')
+          SOFTENED="$SOFTENED original fictional scene, no copyrighted characters."
+          SOFTENED_LEN=${#SOFTENED}
+          echo "SOFTENED_LEN=$SOFTENED_LEN"
+
+          # Attempt 3: softened
+          attempt "$SOFTENED" "3 (softened)"; RC=$?
+          if [ $RC -eq 0 ]; then
+            echo "SUCCESS clip $CLIP on attempt 3 (softened)"
+            exit 0
+          fi
+          echo "Attempt 3 failed (rc=$RC); waiting 60s before final attempt"
+          sleep 60
+
+          # Attempt 4: softened
+          attempt "$SOFTENED" "4 (softened)"; RC=$?
+          if [ $RC -eq 0 ]; then
+            echo "SUCCESS clip $CLIP on attempt 4 (softened)"
+            exit 0
+          fi
+          echo "ОШИБКА: клип $CLIP не создан за 4 попытки (последний статус: failed, последний id: $TASK_ID)" >&2
+          exit 1
+
+      - name: Upload clip artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: niceai-s2e2-clip-${{ matrix.clip }}
+          path: |
+            s2e2-clip-${{ matrix.clip }}.mp4
+          if-no-files-found: warn
