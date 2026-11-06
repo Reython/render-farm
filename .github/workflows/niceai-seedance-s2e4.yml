@@ -1,0 +1,508 @@
+# Season 2 Episode 4 "Sterling Blood" — 30 клипов, frame-chain (first_frame).
+# Стадия A (gen): независимые клипы, обычная генерация.
+# Стадия B (gen_chain1): клипы, чей предшественник — в стадии A.
+# Стадия C (gen_chain2): клипы, чей предшественник — в стадии B (7←6, 10←9, 15←14, 18←17, 27←26).
+# Стадия D (gen_chain3): клип 19←18. Стадия E (gen_chain4): клип 20←19. Стадия F (gen_chain5): клип 21←20.
+# Самая длинная цепочка сценария — пять звеньев подряд (17←16, 18←17, 19←18, 20←19, 21←20),
+# поэтому стадий шесть, а не три: при трёх стадиях клипы 19–21 молча откатились бы к обычной
+# генерации, потому что их предшественники ещё не существовали бы на момент старта стадии C.
+# Кадр для first_frame берётся с 10-й секунды предшественника (ffmpeg -ss 10, 360x640) — вариант,
+# давший в S2E3 больше всего настоящих chained-видео (клипы 8 и 28); кадр с последнего кадра
+# 720x1280 чаще отклоняется фильтром приватности входных изображений (HTTP 400).
+# ffmpeg ставится из статической сборки (johnvansickle.com) в первую очередь, apt с таймаутами —
+# только запасной вариант: в основном запуске S2E3 ffmpeg вообще не был установлен на раннере
+# (exit 127), и все 13 chained-клипов сгенерировались без first_frame; apt на отдельных
+# раннерах зависает или молча проваливается.
+# Логика генерации — в scripts/niceai-gen-clip.sh (та же проверенная спецификация: seedance-2.5,
+# 20 с, 720x1280, 9:16, generate_audio true; дословно, затем смягчённая версия при фильтре copyright).
+name: NiceAI Seedance 2.5 — Season 2 Episode 4
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  gen:
+    name: gen (clip ${{ matrix.clip }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 200
+    strategy:
+      fail-fast: false
+      max-parallel: 5
+      matrix:
+        clip: [1, 3, 5, 8, 11, 13, 16, 22, 24, 25, 28, 29]
+    env:
+      BASE_URL: https://api.niceai.rest/v1
+      USER_AGENT: Mozilla/5.0
+    steps:
+      - name: Checkout репозитория (S2_EPISODE4_SCRIPT.md)
+        uses: actions/checkout@v4
+      - name: Генерация клипа (до 4 попыток, fallback при copyright-фильтре, опрос, скачивание)
+        env:
+          NICEAI_KEY: ${{ secrets.NICEAI_KEY }}
+          SCRIPT_FILE: S2_EPISODE4_SCRIPT.md
+          PREFIX: s2e4
+          CLIP_N: ${{ matrix.clip }}
+        run: bash scripts/niceai-gen-clip.sh
+      - name: Загрузить артефакт niceai-s2e4-clip-N
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: niceai-s2e4-clip-${{ matrix.clip }}
+          path: |
+            s2e4-clip-${{ matrix.clip }}.log
+            create.json
+            status.json
+            body.json
+            s2e4-clip-${{ matrix.clip }}.mp4
+          if-no-files-found: warn
+
+  gen_chain1:
+    name: gen_chain1 (clip ${{ matrix.clip }} <- ${{ matrix.prev }})
+    runs-on: ubuntu-latest
+    needs: gen
+    if: always()
+    timeout-minutes: 200
+    strategy:
+      fail-fast: false
+      max-parallel: 5
+      matrix:
+        include:
+          - { clip: 2, prev: 1 }
+          - { clip: 4, prev: 3 }
+          - { clip: 6, prev: 5 }
+          - { clip: 9, prev: 8 }
+          - { clip: 12, prev: 11 }
+          - { clip: 14, prev: 13 }
+          - { clip: 17, prev: 16 }
+          - { clip: 23, prev: 22 }
+          - { clip: 26, prev: 25 }
+          - { clip: 30, prev: 29 }
+    env:
+      BASE_URL: https://api.niceai.rest/v1
+      USER_AGENT: Mozilla/5.0
+    steps:
+      - name: Checkout репозитория (S2_EPISODE4_SCRIPT.md)
+        uses: actions/checkout@v4
+      - name: Скачать видео предшественника
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: niceai-s2e4-clip-${{ matrix.prev }}
+          path: prev
+      - name: Установить ffmpeg (нужен для извлечения кадра)
+        shell: bash
+        run: |
+          if command -v ffmpeg >/dev/null 2>&1; then
+            echo "ffmpeg уже установлен: $(ffmpeg -version | head -n 1)"
+          else
+            echo "ffmpeg не найден, скачиваю статическую сборку..."
+            STATIC_OK=0
+            if curl -fsSL --max-time 120 -o /tmp/ffmpeg.tar.xz "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz" && tar -xJf /tmp/ffmpeg.tar.xz -C /tmp; then
+              if sudo install -m 755 /tmp/ffmpeg-*-amd64-static/ffmpeg /usr/local/bin/ffmpeg; then
+                STATIC_OK=1
+              fi
+            fi
+            if [ "$STATIC_OK" = "1" ]; then
+              echo "Статическая сборка ffmpeg установлена:"
+              ffmpeg -version | head -n 1
+            else
+              echo "Статическая сборка недоступна, пробую apt (с таймаутами)..."
+              for attempt in 1 2 3; do
+                timeout 120 sudo apt-get update -qq && break || echo "apt-get update не удался (попытка $attempt)"
+                sleep 5
+              done
+              timeout 300 sudo apt-get install -y -qq ffmpeg || echo "Предупреждение: установить ffmpeg не удалось — генерация пойдёт без first_frame"
+              if command -v ffmpeg >/dev/null 2>&1; then
+                ffmpeg -version | head -n 1
+              else
+                echo "ffmpeg недоступен — генерация без first_frame"
+              fi
+            fi
+          fi
+      - name: Извлечь кадр предшественника (10-я секунда, first_frame)
+        continue-on-error: true
+        run: |
+          PREV_MP4="prev/s2e4-clip-${{ matrix.prev }}.mp4"
+          if [ -f "$PREV_MP4" ]; then
+            echo "Predecessor video: $PREV_MP4"
+            ls -lh "$PREV_MP4"
+            ffmpeg -y -i "$PREV_MP4" -ss 10 -vf scale=360:640 -frames:v 1 -q:v 4 first_frame.jpg && ls -lh first_frame.jpg && file first_frame.jpg
+          else
+            echo "Предупреждение: видео предшественника $PREV_MP4 не найдено — генерация без first_frame"
+          fi
+      - name: Генерация клипа с first_frame (до 4 попыток, fallback при copyright-фильтре, опрос, скачивание)
+        env:
+          NICEAI_KEY: ${{ secrets.NICEAI_KEY }}
+          SCRIPT_FILE: S2_EPISODE4_SCRIPT.md
+          PREFIX: s2e4
+          CLIP_N: ${{ matrix.clip }}
+        run: bash scripts/niceai-gen-clip.sh
+      - name: Загрузить артефакт niceai-s2e4-clip-N
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: niceai-s2e4-clip-${{ matrix.clip }}
+          path: |
+            prompt.txt
+            s2e4-clip-${{ matrix.clip }}.log
+            create.json
+            status.json
+            body.json
+            s2e4-clip-${{ matrix.clip }}.mp4
+            first_frame.jpg
+          if-no-files-found: warn
+
+  gen_chain2:
+    name: gen_chain2 (clip ${{ matrix.clip }} <- ${{ matrix.prev }})
+    runs-on: ubuntu-latest
+    needs: gen_chain1
+    if: always()
+    timeout-minutes: 200
+    strategy:
+      fail-fast: false
+      max-parallel: 5
+      matrix:
+        include:
+          - { clip: 7, prev: 6 }
+          - { clip: 10, prev: 9 }
+          - { clip: 15, prev: 14 }
+          - { clip: 18, prev: 17 }
+          - { clip: 27, prev: 26 }
+    env:
+      BASE_URL: https://api.niceai.rest/v1
+      USER_AGENT: Mozilla/5.0
+    steps:
+      - name: Checkout репозитория (S2_EPISODE4_SCRIPT.md)
+        uses: actions/checkout@v4
+      - name: Скачать видео предшественника
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: niceai-s2e4-clip-${{ matrix.prev }}
+          path: prev
+      - name: Установить ffmpeg (нужен для извлечения кадра)
+        shell: bash
+        run: |
+          if command -v ffmpeg >/dev/null 2>&1; then
+            echo "ffmpeg уже установлен: $(ffmpeg -version | head -n 1)"
+          else
+            echo "ffmpeg не найден, скачиваю статическую сборку..."
+            STATIC_OK=0
+            if curl -fsSL --max-time 120 -o /tmp/ffmpeg.tar.xz "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz" && tar -xJf /tmp/ffmpeg.tar.xz -C /tmp; then
+              if sudo install -m 755 /tmp/ffmpeg-*-amd64-static/ffmpeg /usr/local/bin/ffmpeg; then
+                STATIC_OK=1
+              fi
+            fi
+            if [ "$STATIC_OK" = "1" ]; then
+              echo "Статическая сборка ffmpeg установлена:"
+              ffmpeg -version | head -n 1
+            else
+              echo "Статическая сборка недоступна, пробую apt (с таймаутами)..."
+              for attempt in 1 2 3; do
+                timeout 120 sudo apt-get update -qq && break || echo "apt-get update не удался (попытка $attempt)"
+                sleep 5
+              done
+              timeout 300 sudo apt-get install -y -qq ffmpeg || echo "Предупреждение: установить ffmpeg не удалось — генерация пойдёт без first_frame"
+              if command -v ffmpeg >/dev/null 2>&1; then
+                ffmpeg -version | head -n 1
+              else
+                echo "ffmpeg недоступен — генерация без first_frame"
+              fi
+            fi
+          fi
+      - name: Извлечь кадр предшественника (10-я секунда, first_frame)
+        continue-on-error: true
+        run: |
+          PREV_MP4="prev/s2e4-clip-${{ matrix.prev }}.mp4"
+          if [ -f "$PREV_MP4" ]; then
+            echo "Predecessor video: $PREV_MP4"
+            ls -lh "$PREV_MP4"
+            ffmpeg -y -i "$PREV_MP4" -ss 10 -vf scale=360:640 -frames:v 1 -q:v 4 first_frame.jpg && ls -lh first_frame.jpg && file first_frame.jpg
+          else
+            echo "Предупреждение: видео предшественника $PREV_MP4 не найдено — генерация без first_frame"
+          fi
+      - name: Генерация клипа с first_frame (до 4 попыток, fallback при copyright-фильтре, опрос, скачивание)
+        env:
+          NICEAI_KEY: ${{ secrets.NICEAI_KEY }}
+          SCRIPT_FILE: S2_EPISODE4_SCRIPT.md
+          PREFIX: s2e4
+          CLIP_N: ${{ matrix.clip }}
+        run: bash scripts/niceai-gen-clip.sh
+      - name: Загрузить артефакт niceai-s2e4-clip-N
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: niceai-s2e4-clip-${{ matrix.clip }}
+          path: |
+            prompt.txt
+            s2e4-clip-${{ matrix.clip }}.log
+            create.json
+            status.json
+            body.json
+            s2e4-clip-${{ matrix.clip }}.mp4
+            first_frame.jpg
+          if-no-files-found: warn
+
+  gen_chain3:
+    name: gen_chain3 (clip ${{ matrix.clip }} <- ${{ matrix.prev }})
+    runs-on: ubuntu-latest
+    needs: gen_chain2
+    if: always()
+    timeout-minutes: 200
+    strategy:
+      fail-fast: false
+      max-parallel: 5
+      matrix:
+        include:
+          - { clip: 19, prev: 18 }
+    env:
+      BASE_URL: https://api.niceai.rest/v1
+      USER_AGENT: Mozilla/5.0
+    steps:
+      - name: Checkout репозитория (S2_EPISODE4_SCRIPT.md)
+        uses: actions/checkout@v4
+      - name: Скачать видео предшественника
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: niceai-s2e4-clip-${{ matrix.prev }}
+          path: prev
+      - name: Установить ffmpeg (нужен для извлечения кадра)
+        shell: bash
+        run: |
+          if command -v ffmpeg >/dev/null 2>&1; then
+            echo "ffmpeg уже установлен: $(ffmpeg -version | head -n 1)"
+          else
+            echo "ffmpeg не найден, скачиваю статическую сборку..."
+            STATIC_OK=0
+            if curl -fsSL --max-time 120 -o /tmp/ffmpeg.tar.xz "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz" && tar -xJf /tmp/ffmpeg.tar.xz -C /tmp; then
+              if sudo install -m 755 /tmp/ffmpeg-*-amd64-static/ffmpeg /usr/local/bin/ffmpeg; then
+                STATIC_OK=1
+              fi
+            fi
+            if [ "$STATIC_OK" = "1" ]; then
+              echo "Статическая сборка ffmpeg установлена:"
+              ffmpeg -version | head -n 1
+            else
+              echo "Статическая сборка недоступна, пробую apt (с таймаутами)..."
+              for attempt in 1 2 3; do
+                timeout 120 sudo apt-get update -qq && break || echo "apt-get update не удался (попытка $attempt)"
+                sleep 5
+              done
+              timeout 300 sudo apt-get install -y -qq ffmpeg || echo "Предупреждение: установить ffmpeg не удалось — генерация пойдёт без first_frame"
+              if command -v ffmpeg >/dev/null 2>&1; then
+                ffmpeg -version | head -n 1
+              else
+                echo "ffmpeg недоступен — генерация без first_frame"
+              fi
+            fi
+          fi
+      - name: Извлечь кадр предшественника (10-я секунда, first_frame)
+        continue-on-error: true
+        run: |
+          PREV_MP4="prev/s2e4-clip-${{ matrix.prev }}.mp4"
+          if [ -f "$PREV_MP4" ]; then
+            echo "Predecessor video: $PREV_MP4"
+            ls -lh "$PREV_MP4"
+            ffmpeg -y -i "$PREV_MP4" -ss 10 -vf scale=360:640 -frames:v 1 -q:v 4 first_frame.jpg && ls -lh first_frame.jpg && file first_frame.jpg
+          else
+            echo "Предупреждение: видео предшественника $PREV_MP4 не найдено — генерация без first_frame"
+          fi
+      - name: Генерация клипа с first_frame (до 4 попыток, fallback при copyright-фильтре, опрос, скачивание)
+        env:
+          NICEAI_KEY: ${{ secrets.NICEAI_KEY }}
+          SCRIPT_FILE: S2_EPISODE4_SCRIPT.md
+          PREFIX: s2e4
+          CLIP_N: ${{ matrix.clip }}
+        run: bash scripts/niceai-gen-clip.sh
+      - name: Загрузить артефакт niceai-s2e4-clip-N
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: niceai-s2e4-clip-${{ matrix.clip }}
+          path: |
+            prompt.txt
+            s2e4-clip-${{ matrix.clip }}.log
+            create.json
+            status.json
+            body.json
+            s2e4-clip-${{ matrix.clip }}.mp4
+            first_frame.jpg
+          if-no-files-found: warn
+
+  gen_chain4:
+    name: gen_chain4 (clip ${{ matrix.clip }} <- ${{ matrix.prev }})
+    runs-on: ubuntu-latest
+    needs: gen_chain3
+    if: always()
+    timeout-minutes: 200
+    strategy:
+      fail-fast: false
+      max-parallel: 5
+      matrix:
+        include:
+          - { clip: 20, prev: 19 }
+    env:
+      BASE_URL: https://api.niceai.rest/v1
+      USER_AGENT: Mozilla/5.0
+    steps:
+      - name: Checkout репозитория (S2_EPISODE4_SCRIPT.md)
+        uses: actions/checkout@v4
+      - name: Скачать видео предшественника
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: niceai-s2e4-clip-${{ matrix.prev }}
+          path: prev
+      - name: Установить ffmpeg (нужен для извлечения кадра)
+        shell: bash
+        run: |
+          if command -v ffmpeg >/dev/null 2>&1; then
+            echo "ffmpeg уже установлен: $(ffmpeg -version | head -n 1)"
+          else
+            echo "ffmpeg не найден, скачиваю статическую сборку..."
+            STATIC_OK=0
+            if curl -fsSL --max-time 120 -o /tmp/ffmpeg.tar.xz "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz" && tar -xJf /tmp/ffmpeg.tar.xz -C /tmp; then
+              if sudo install -m 755 /tmp/ffmpeg-*-amd64-static/ffmpeg /usr/local/bin/ffmpeg; then
+                STATIC_OK=1
+              fi
+            fi
+            if [ "$STATIC_OK" = "1" ]; then
+              echo "Статическая сборка ffmpeg установлена:"
+              ffmpeg -version | head -n 1
+            else
+              echo "Статическая сборка недоступна, пробую apt (с таймаутами)..."
+              for attempt in 1 2 3; do
+                timeout 120 sudo apt-get update -qq && break || echo "apt-get update не удался (попытка $attempt)"
+                sleep 5
+              done
+              timeout 300 sudo apt-get install -y -qq ffmpeg || echo "Предупреждение: установить ffmpeg не удалось — генерация пойдёт без first_frame"
+              if command -v ffmpeg >/dev/null 2>&1; then
+                ffmpeg -version | head -n 1
+              else
+                echo "ffmpeg недоступен — генерация без first_frame"
+              fi
+            fi
+          fi
+      - name: Извлечь кадр предшественника (10-я секунда, first_frame)
+        continue-on-error: true
+        run: |
+          PREV_MP4="prev/s2e4-clip-${{ matrix.prev }}.mp4"
+          if [ -f "$PREV_MP4" ]; then
+            echo "Predecessor video: $PREV_MP4"
+            ls -lh "$PREV_MP4"
+            ffmpeg -y -i "$PREV_MP4" -ss 10 -vf scale=360:640 -frames:v 1 -q:v 4 first_frame.jpg && ls -lh first_frame.jpg && file first_frame.jpg
+          else
+            echo "Предупреждение: видео предшественника $PREV_MP4 не найдено — генерация без first_frame"
+          fi
+      - name: Генерация клипа с first_frame (до 4 попыток, fallback при copyright-фильтре, опрос, скачивание)
+        env:
+          NICEAI_KEY: ${{ secrets.NICEAI_KEY }}
+          SCRIPT_FILE: S2_EPISODE4_SCRIPT.md
+          PREFIX: s2e4
+          CLIP_N: ${{ matrix.clip }}
+        run: bash scripts/niceai-gen-clip.sh
+      - name: Загрузить артефакт niceai-s2e4-clip-N
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: niceai-s2e4-clip-${{ matrix.clip }}
+          path: |
+            prompt.txt
+            s2e4-clip-${{ matrix.clip }}.log
+            create.json
+            status.json
+            body.json
+            s2e4-clip-${{ matrix.clip }}.mp4
+            first_frame.jpg
+          if-no-files-found: warn
+
+  gen_chain5:
+    name: gen_chain5 (clip ${{ matrix.clip }} <- ${{ matrix.prev }})
+    runs-on: ubuntu-latest
+    needs: gen_chain4
+    if: always()
+    timeout-minutes: 200
+    strategy:
+      fail-fast: false
+      max-parallel: 5
+      matrix:
+        include:
+          - { clip: 21, prev: 20 }
+    env:
+      BASE_URL: https://api.niceai.rest/v1
+      USER_AGENT: Mozilla/5.0
+    steps:
+      - name: Checkout репозитория (S2_EPISODE4_SCRIPT.md)
+        uses: actions/checkout@v4
+      - name: Скачать видео предшественника
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: niceai-s2e4-clip-${{ matrix.prev }}
+          path: prev
+      - name: Установить ffmpeg (нужен для извлечения кадра)
+        shell: bash
+        run: |
+          if command -v ffmpeg >/dev/null 2>&1; then
+            echo "ffmpeg уже установлен: $(ffmpeg -version | head -n 1)"
+          else
+            echo "ffmpeg не найден, скачиваю статическую сборку..."
+            STATIC_OK=0
+            if curl -fsSL --max-time 120 -o /tmp/ffmpeg.tar.xz "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz" && tar -xJf /tmp/ffmpeg.tar.xz -C /tmp; then
+              if sudo install -m 755 /tmp/ffmpeg-*-amd64-static/ffmpeg /usr/local/bin/ffmpeg; then
+                STATIC_OK=1
+              fi
+            fi
+            if [ "$STATIC_OK" = "1" ]; then
+              echo "Статическая сборка ffmpeg установлена:"
+              ffmpeg -version | head -n 1
+            else
+              echo "Статическая сборка недоступна, пробую apt (с таймаутами)..."
+              for attempt in 1 2 3; do
+                timeout 120 sudo apt-get update -qq && break || echo "apt-get update не удался (попытка $attempt)"
+                sleep 5
+              done
+              timeout 300 sudo apt-get install -y -qq ffmpeg || echo "Предупреждение: установить ffmpeg не удалось — генерация пойдёт без first_frame"
+              if command -v ffmpeg >/dev/null 2>&1; then
+                ffmpeg -version | head -n 1
+              else
+                echo "ffmpeg недоступен — генерация без first_frame"
+              fi
+            fi
+          fi
+      - name: Извлечь кадр предшественника (10-я секунда, first_frame)
+        continue-on-error: true
+        run: |
+          PREV_MP4="prev/s2e4-clip-${{ matrix.prev }}.mp4"
+          if [ -f "$PREV_MP4" ]; then
+            echo "Predecessor video: $PREV_MP4"
+            ls -lh "$PREV_MP4"
+            ffmpeg -y -i "$PREV_MP4" -ss 10 -vf scale=360:640 -frames:v 1 -q:v 4 first_frame.jpg && ls -lh first_frame.jpg && file first_frame.jpg
+          else
+            echo "Предупреждение: видео предшественника $PREV_MP4 не найдено — генерация без first_frame"
+          fi
+      - name: Генерация клипа с first_frame (до 4 попыток, fallback при copyright-фильтре, опрос, скачивание)
+        env:
+          NICEAI_KEY: ${{ secrets.NICEAI_KEY }}
+          SCRIPT_FILE: S2_EPISODE4_SCRIPT.md
+          PREFIX: s2e4
+          CLIP_N: ${{ matrix.clip }}
+        run: bash scripts/niceai-gen-clip.sh
+      - name: Загрузить артефакт niceai-s2e4-clip-N
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: niceai-s2e4-clip-${{ matrix.clip }}
+          path: |
+            prompt.txt
+            s2e4-clip-${{ matrix.clip }}.log
+            create.json
+            status.json
+            body.json
+            s2e4-clip-${{ matrix.clip }}.mp4
+            first_frame.jpg
+          if-no-files-found: warn
