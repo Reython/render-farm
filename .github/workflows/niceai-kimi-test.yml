@@ -1,0 +1,36 @@
+name: niceai-kimi-test-newkey
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      BASE_URL: https://api.niceai.rest/v1
+      USER_AGENT: Mozilla/5.0
+    steps:
+      - name: Models catalog + one kimi-k3-1-pro ping
+        env:
+          NICEAI_KEY: ${{ secrets.NICEAI_KEY_NEW }}
+        run: |
+          echo "=== GET /v1/models (full) ===" | tee run.log
+          curl -s -A "$USER_AGENT" -H "Authorization: Bearer $NICEAI_KEY" "$BASE_URL/models" | tee -a run.log; echo | tee -a run.log
+          echo "=== POST /v1/chat/completions kimi-k3-1-pro ===" | tee -a run.log
+          printf '%s' '{"model":"kimi-k3-1-pro","messages":[{"role":"user","content":"Reply with exactly: KIMI_OK"}],"max_tokens":300}' > body.json
+          curl -s -A "$USER_AGENT" -D headers.txt -H "Authorization: Bearer $NICEAI_KEY" -H "Content-Type: application/json" --data @body.json -o chat.json -w 'CHAT HTTP:%{http_code}\n' "$BASE_URL/chat/completions" | tee -a run.log
+          echo "--- response headers ---" | tee -a run.log
+          cat headers.txt | tee -a run.log
+          echo "--- response body (verbatim) ---" | tee -a run.log
+          cat chat.json | tee -a run.log; echo | tee -a run.log
+          echo "--- usage field ---" | tee -a run.log
+          python3 -c "import json;d=json.load(open('chat.json'));print('usage=',d.get('usage'));print('model=',d.get('model'));print('error=',d.get('error'))" | tee -a run.log
+      - name: Upload artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: niceai-kimi-test-newkey
+          path: |
+            run.log
+            headers.txt
+            chat.json
+          if-no-files-found: warn
