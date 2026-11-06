@@ -1,0 +1,119 @@
+name: NiceAI Seedance 2.5 — PMU first-frame probe 2
+
+on:
+  workflow_dispatch:
+
+env:
+  BASE_URL: https://api.niceai.rest/v1
+  MODEL: seedance-2.5
+
+jobs:
+  hall:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: first_frame = waiting hall panel
+        env:
+          NICEAI_KEY: ${{ secrets.NICEAI_KEY }}
+        run: |
+          python3 - <<'PYEOF'
+          import base64, json, os
+          def b64(p):
+              return "data:image/jpeg;base64," + base64.b64encode(open(p,'rb').read()).decode()
+          prompt = ("Vertical 9:16, anime style, cinematic lighting. Animate this exact scene: the summoned heroes stir and look around the stone waiting hall "
+                    "while the tiny fairy hovers above them; slow camera push-in; keep every character's face, hair and outfit exactly as in the starting image. "
+                    "Dialogue: Iselle says \"Welcome, heroes. The game has begun.\" No readable text anywhere.")
+          body = {"model": "seedance-2.5", "prompt": prompt, "seconds": 20,
+                  "size": "720x1280", "resolution": "720p", "aspect_ratio": "9:16", "generate_audio": True,
+                  "first_frame": b64("pmu_refs/pmu_ref_hall.jpg")}
+          json.dump(body, open("body.json","w"))
+          print("body bytes:", os.path.getsize("body.json"))
+          PYEOF
+          for TRY in 1 2 3; do
+            echo "=== attempt $TRY"
+            curl -s -A "Mozilla/5.0" -X POST "$BASE_URL/videos" -H "Authorization: Bearer $NICEAI_KEY" -H "Content-Type: application/json" --data @body.json | tee create.json
+            VID=$(python3 -c "import json;d=json.load(open('create.json'));print(d.get('id') or '')")
+            if [ -z "$VID" ]; then echo "NO ID"; sleep 5; continue; fi
+            echo "video id: $VID"
+            DONE=""
+            for i in $(seq 1 90); do
+              sleep 15
+              curl -s -A "Mozilla/5.0" "$BASE_URL/videos/$VID" -H "Authorization: Bearer $NICEAI_KEY" > status.json
+              ST=$(python3 -c "import json;print(json.load(open('status.json')).get('status',''))" 2>/dev/null || echo "?")
+              echo "poll $i: $ST"
+              if [ "$ST" = "completed" ] || [ "$ST" = "succeeded" ]; then DONE=1; break; fi
+              if [ "$ST" = "failed" ]; then cat status.json; break; fi
+            done
+            if [ -n "$DONE" ]; then
+              URL=$(python3 -c "import json;d=json.load(open('status.json'));u=d.get('urls') or [];print(u[0] if u else '')")
+              if [ -n "$URL" ]; then curl -sL -A "Mozilla/5.0" "$URL" -o probe2-hall.mp4; else curl -sL -A "Mozilla/5.0" "$BASE_URL/videos/$VID/content" -H "Authorization: Bearer $NICEAI_KEY" -o probe2-hall.mp4; fi
+              ls -la probe2-hall.mp4 && break
+            fi
+            sleep 5
+          done
+          test -s probe2-hall.mp4
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: niceai-pmu-probe2-hall
+          path: |
+            probe2-hall.mp4
+            create.json
+            status.json
+          if-no-files-found: warn
+
+  han:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: first_frame = Han arena panel
+        env:
+          NICEAI_KEY: ${{ secrets.NICEAI_KEY }}
+        run: |
+          python3 - <<'PYEOF'
+          import base64, json, os
+          def b64(p):
+              return "data:image/jpeg;base64," + base64.b64encode(open(p,'rb').read()).decode()
+          prompt = ("Vertical 9:16, anime style, cinematic lighting. Animate this exact scene: the young swordsman lowers his raised sword and scans the arena warily "
+                    "while the red-braided archer behind him nocks an arrow; keep both characters' faces, hair and outfits exactly as in the starting image. "
+                    "Dialogue: Han says \"Stay close. Watch the gates.\" No readable text anywhere.")
+          body = {"model": "seedance-2.5", "prompt": prompt, "seconds": 20,
+                  "size": "720x1280", "resolution": "720p", "aspect_ratio": "9:16", "generate_audio": True,
+                  "first_frame": b64("pmu_refs/pmu_ref_han4.jpg")}
+          json.dump(body, open("body.json","w"))
+          print("body bytes:", os.path.getsize("body.json"))
+          PYEOF
+          for TRY in 1 2 3; do
+            echo "=== attempt $TRY"
+            curl -s -A "Mozilla/5.0" -X POST "$BASE_URL/videos" -H "Authorization: Bearer $NICEAI_KEY" -H "Content-Type: application/json" --data @body.json | tee create.json
+            VID=$(python3 -c "import json;d=json.load(open('create.json'));print(d.get('id') or '')")
+            if [ -z "$VID" ]; then echo "NO ID"; sleep 5; continue; fi
+            echo "video id: $VID"
+            DONE=""
+            for i in $(seq 1 90); do
+              sleep 15
+              curl -s -A "Mozilla/5.0" "$BASE_URL/videos/$VID" -H "Authorization: Bearer $NICEAI_KEY" > status.json
+              ST=$(python3 -c "import json;print(json.load(open('status.json')).get('status',''))" 2>/dev/null || echo "?")
+              echo "poll $i: $ST"
+              if [ "$ST" = "completed" ] || [ "$ST" = "succeeded" ]; then DONE=1; break; fi
+              if [ "$ST" = "failed" ]; then cat status.json; break; fi
+            done
+            if [ -n "$DONE" ]; then
+              URL=$(python3 -c "import json;d=json.load(open('status.json'));u=d.get('urls') or [];print(u[0] if u else '')")
+              if [ -n "$URL" ]; then curl -sL -A "Mozilla/5.0" "$URL" -o probe2-han.mp4; else curl -sL -A "Mozilla/5.0" "$BASE_URL/videos/$VID/content" -H "Authorization: Bearer $NICEAI_KEY" -o probe2-han.mp4; fi
+              ls -la probe2-han.mp4 && break
+            fi
+            sleep 5
+          done
+          test -s probe2-han.mp4
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: niceai-pmu-probe2-han
+          path: |
+            probe2-han.mp4
+            create.json
+            status.json
+          if-no-files-found: warn
