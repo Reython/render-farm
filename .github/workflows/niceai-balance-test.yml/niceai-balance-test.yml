@@ -1,0 +1,67 @@
+name: niceai-balance-test-newkey
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      BASE_URL: https://api.niceai.rest/v1
+      USER_AGENT: Mozilla/5.0
+    steps:
+      - name: Probes BEFORE + one seedance-2.5 generation + probes AFTER
+        env:
+          NICEAI_KEY: ${{ secrets.NICEAI_KEY_NEW }}
+        run: |
+          probe() {
+            for ep in "videos/models" "balance" "user/balance" "usage" "me" "dashboard/billing/subscription" "dashboard/billing/usage"; do
+              echo "=== GET /v1/$ep ==="
+              curl -s -A "$USER_AGENT" -H "Authorization: Bearer $NICEAI_KEY" -w '\nHTTP:%{http_code}\n' "$BASE_URL/$ep" | head -c 1500
+              echo
+            done
+          }
+          echo "########## BEFORE ##########" | tee before.txt
+          probe | tee -a before.txt
+          echo "########## GENERATE ##########" | tee run.log
+          VID=""
+          for SEC in 5 10 20; do
+            printf '%s' "{\"model\":\"seedance-2.5\",\"prompt\":\"A red ball rolls slowly across a wooden table toward the camera, bright daylight, simple clean background, no people, no text\",\"seconds\":$SEC,\"size\":\"720x1280\",\"resolution\":\"720p\",\"aspect_ratio\":\"9:16\",\"generate_audio\":false}" > body.json
+            curl -s -A "$USER_AGENT" -H "Authorization: Bearer $NICEAI_KEY" -H "Content-Type: application/json" --data @body.json -o create.json -w 'CREATE HTTP:%{http_code}\n' "$BASE_URL/videos" | tee -a run.log
+            cat create.json | tee -a run.log; echo | tee -a run.log
+            VID=$(python3 -c "import json;print(json.load(open('create.json')).get('id') or '')" 2>/dev/null || echo "")
+            if [ -n "$VID" ]; then echo "TASK_ID=$VID SECONDS=$SEC" | tee -a run.log; break; fi
+            echo "No id for seconds=$SEC, trying next" | tee -a run.log
+          done
+          if [ -z "$VID" ]; then echo "ERROR: no task id for any seconds value" | tee -a run.log; exit 1; fi
+          STATUS=""
+          for i in $(seq 1 160); do
+            curl -s -A "$USER_AGENT" -H "Authorization: Bearer $NICEAI_KEY" -o status.json "$BASE_URL/videos/$VID"
+            STATUS=$(python3 -c "import json;print(json.load(open('status.json')).get('status',''))" 2>/dev/null || echo "?")
+            echo "poll $i status=$STATUS" | tee -a run.log
+            if [ "$STATUS" = "completed" ] || [ "$STATUS" = "failed" ]; then break; fi
+            sleep 15
+          done
+          echo "--- FINAL STATUS JSON ---" | tee -a run.log
+          cat status.json | tee -a run.log; echo | tee -a run.log
+          echo "--- USAGE FIELD ---" | tee -a run.log
+          python3 -c "import json;d=json.load(open('status.json'));print('usage=',d.get('usage'))" | tee -a run.log
+          if [ "$STATUS" = "completed" ]; then
+            URL=$(python3 -c "import json;d=json.load(open('status.json'));u=d.get('urls') or [];print(u[0] if u else '')")
+            if [ -n "$URL" ]; then curl -sL -A "$USER_AGENT" "$URL" -o test-newkey.mp4; else curl -sL -A "$USER_AGENT" -H "Authorization: Bearer $NICEAI_KEY" "$BASE_URL/videos/$VID/content" -o test-newkey.mp4; fi
+            ls -la test-newkey.mp4 | tee -a run.log
+          fi
+          echo "########## AFTER ##########" | tee after.txt
+          probe | tee -a after.txt
+      - name: Upload artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: niceai-newkey-balance-test
+          path: |
+            before.txt
+            after.txt
+            run.log
+            create.json
+            status.json
+            test-newkey.mp4
+          if-no-files-found: warn
