@@ -1,0 +1,100 @@
+# Season 2 Episode 4, retry перефразированных клипов 2, 9, 27.
+# Клипы 2 и 9 упали по 11 раз (основной запуск — фильтр приватности входного кадра,
+# plain-retry #1 и #2 — copyright-фильтр); клип 27 — 12 раз (дословно и смягчённо, plain).
+# Перефразировка v1: переписаны только режиссура/описание сцены/камера/финал;
+# диалоги и блоки персонажей — дословно; добавлен суффикс
+# "original fictional scene, no copyrighted characters".
+# Канонический S2_EPISODE4_SCRIPT.md не трогается — патчится копия S2_EPISODE4_SCRIPT_PARA.md.
+name: NiceAI Seedance 2.5 — Season 2 Episode 4 retry paraphrased (clips 2, 9, 27)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  gen:
+    name: gen (clip ${{ matrix.clip }}, paraphrased)
+    runs-on: ubuntu-latest
+    timeout-minutes: 200
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        clip: [2, 9, 27]
+    env:
+      BASE_URL: https://api.niceai.rest/v1
+      USER_AGENT: Mozilla/5.0
+    steps:
+      - name: Checkout репозитория (S2_EPISODE4_SCRIPT.md)
+        uses: actions/checkout@v4
+      - name: Перефразировать промпты клипов 2, 9, 27 (v1)
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          src = open('S2_EPISODE4_SCRIPT.md', encoding='utf-8').read()
+          def patch(n, nxt, repl):
+              start = src.index('## CLIP %d ' % n)
+              end = src.index('## CLIP %d ' % nxt, start)
+              section = src[start:end]
+              for old, new in repl:
+                  c = section.count(old)
+                  assert c == 1, "clip %d: ожидалось 1 вхождение, найдено %d: %s" % (n, c, old[:60])
+                  section = section.replace(old, new)
+              assert section.count("original fictional scene, no copyrighted characters.") == 1
+              prompt = section.split('**Seedance Prompt:**', 1)[1].strip().split('\n\n', 1)[0].strip()
+              print("CLIP %d PARAPHRASED_LEN=%d HEAD=%s" % (n, len(prompt), prompt[:120]))
+              return start, end, section
+          out = src
+          for n, nxt, repl in [
+            (27, 28, [
+              ("Same garden two-shot, unbroken. Alexander Sterling slowly raises one hand, palm open, and waits; after a long pause Vivienne Hart steps closer and rests her hand in his.",
+               "The same garden two-shot, unbroken. Alexander Sterling lifts one hand slowly, palm open, and waits; after a long pause Vivienne Hart moves closer and rests her hand in his."),
+              ("Camera: slow push-in from their faces down to their joined hands.",
+               "Camera: a slow, steady move from their faces down to the hands they have joined."),
+              ("Dialogue: none — thirty years of silence ending in one small gesture, not a speech.",
+               "Dialogue: none — thirty years of silence resolved in one small gesture, not in words."),
+              ("End mid-tension on their hands, held a moment too long to be formal.",
+               "End on the held tension of their hands, held a moment longer than formality allows. original fictional scene, no copyrighted characters."),
+            ]),
+            (9, 10, [
+              ("Same boardroom, seconds later. Ethan Cole remains standing beside Ava Sterling and addresses the whole table, his gaze level; Margaret Cole sits very still at the far end.",
+               "The same boardroom, a few seconds on. Ethan Cole stays on his feet beside Ava Sterling, speaking to the whole table with a level gaze, while Margaret Cole sits very still at the far end."),
+              ("Camera: slow push-in on Ethan, Margaret soft at the frame edge.",
+               "Camera: a slow, steady move toward Ethan, with Margaret soft at the edge of the frame."),
+              ("End mid-tension on board members turning toward Margaret.",
+               "End on the held tension of the board members turning their heads toward Margaret. original fictional scene, no copyrighted characters."),
+            ]),
+            (2, 3, [
+              ("Same press moment, seconds later. Margaret Cole holds the room with a calm, measured voice while the reporters lean in, their recorders and screens all angled away from camera.",
+               "The same press moment, a few seconds on. Margaret Cole keeps the room with a calm, measured voice as the reporters lean in, their recorders and screens turned away from the lens."),
+              ("Camera: tight close on Margaret's face as the press fades to a soft blur at the frame edges.",
+               "Camera: a tight close on Margaret's face while the press softens into a blur at the edges of the frame."),
+              ("End mid-tension on a reporter's hand rising with a question she ignores.",
+               "End on the held tension of a reporter's hand rising with a question she lets pass. original fictional scene, no copyrighted characters."),
+            ]),
+          ]:
+              start, end, section = patch(n, nxt, repl)
+              out = out[:start] + section + out[end:]
+          open('S2_EPISODE4_SCRIPT_PARA.md', 'w', encoding='utf-8').write(out)
+          PY
+      - name: Генерация клипа (до 4 попыток, fallback при copyright-фильтре, опрос, скачивание)
+        env:
+          NICEAI_KEY: ${{ secrets.NICEAI_KEY }}
+          SCRIPT_FILE: S2_EPISODE4_SCRIPT_PARA.md
+          PREFIX: s2e4
+          CLIP_N: ${{ matrix.clip }}
+        run: bash scripts/niceai-gen-clip.sh
+      - name: Загрузить артефакт niceai-s2e4-clip-N
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: niceai-s2e4-clip-${{ matrix.clip }}
+          path: |
+            s2e4-clip-${{ matrix.clip }}.log
+            create.json
+            status.json
+            body.json
+            s2e4-clip-${{ matrix.clip }}.mp4
+          if-no-files-found: warn
