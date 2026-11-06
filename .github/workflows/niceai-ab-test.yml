@@ -1,0 +1,71 @@
+name: niceai-ab-test
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      BASE_URL: https://api.niceai.rest/v1
+      USER_AGENT: Mozilla/5.0
+    steps:
+      - name: A/B kimi ping + seedance 5s on OLD and NEW keys
+        env:
+          OLD_KEY: ${{ secrets.NICEAI_KEY }}
+          NEW_KEY: ${{ secrets.NICEAI_KEY_NEW }}
+        run: |
+          kimi() {
+            local KEY="$1" TAG="$2"
+            printf '%s' '{"model":"kimi-k3-1-pro","messages":[{"role":"user","content":"Reply with exactly: KIMI_OK"}],"max_tokens":300}' > body-$TAG.json
+            echo "=== KIMI $TAG ===" | tee -a run.log
+            curl -s -A "$USER_AGENT" -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" --data @body-$TAG.json -o chat-$TAG.json -w "HTTP:%{http_code}\n" "$BASE_URL/chat/completions" | tee -a run.log
+            cat chat-$TAG.json | tee -a run.log; echo | tee -a run.log
+            python3 -c "import json;d=json.load(open('chat-$TAG.json'));print('$TAG usage=',d.get('usage'));print('$TAG error=',d.get('error'))" | tee -a run.log || true
+            echo "=== MODELS $TAG ===" | tee -a run.log
+            curl -s -A "$USER_AGENT" -H "Authorization: Bearer $KEY" "$BASE_URL/models" -o models-$TAG.json || true
+            python3 -c "import json;d=json.load(open('models-$TAG.json'));items=d.get('data',d) if isinstance(d,dict) else d;print('$TAG model ids=',[m.get('id') for m in items] if isinstance(items,list) else d)" | tee -a run.log || cat models-$TAG.json | tee -a run.log
+          }
+          seed() {
+            local KEY="$1" TAG="$2"
+            echo "=== SEEDANCE $TAG ===" | tee -a run.log
+            printf '%s' '{"model":"seedance-2.5","prompt":"A red ball rolls slowly across a wooden table toward the camera, bright daylight, simple clean background, no people, no text","seconds":5,"size":"720x1280","resolution":"720p","aspect_ratio":"9:16","generate_audio":false}' > sbody-$TAG.json
+            curl -s -A "$USER_AGENT" -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" --data @sbody-$TAG.json -o create-$TAG.json -w "CREATE HTTP:%{http_code}\n" "$BASE_URL/videos" | tee -a run.log
+            cat create-$TAG.json | tee -a run.log; echo | tee -a run.log
+            local VID=$(python3 -c "import json;print(json.load(open('create-$TAG.json')).get('id') or '')" 2>/dev/null || echo "")
+            echo "$TAG TASK_ID=$VID" | tee -a run.log
+            if [ -z "$VID" ]; then echo "$TAG NO TASK ID" | tee -a run.log; return 0; fi
+            local STATUS=""
+            for i in $(seq 1 120); do
+              curl -s -A "$USER_AGENT" -H "Authorization: Bearer $KEY" -o status-$TAG.json "$BASE_URL/videos/$VID"
+              STATUS=$(python3 -c "import json;print(json.load(open('status-$TAG.json')).get('status',''))" 2>/dev/null || echo "?")
+              echo "$TAG poll $i status=$STATUS" | tee -a run.log
+              if [ "$STATUS" = "completed" ] || [ "$STATUS" = "failed" ]; then break; fi
+              sleep 15
+            done
+            echo "--- $TAG FINAL STATUS ---" | tee -a run.log
+            cat status-$TAG.json | tee -a run.log; echo | tee -a run.log
+            python3 -c "import json;d=json.load(open('status-$TAG.json'));print('$TAG usage=',d.get('usage'));print('$TAG error=',d.get('error'))" | tee -a run.log || true
+          }
+          kimi "$OLD_KEY" OLD
+          kimi "$NEW_KEY" NEW1
+          kimi "$NEW_KEY" NEW2
+          seed "$OLD_KEY" OLD
+          seed "$NEW_KEY" NEW
+          echo "=== DONE ===" | tee -a run.log
+      - name: Upload artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: niceai-ab-test
+          path: |
+            run.log
+            chat-OLD.json
+            chat-NEW1.json
+            chat-NEW2.json
+            models-OLD.json
+            models-NEW1.json
+            create-OLD.json
+            create-NEW.json
+            status-OLD.json
+            status-NEW.json
+          if-no-files-found: warn
