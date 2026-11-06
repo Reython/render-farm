@@ -17,6 +17,10 @@
 # noisy per attempt (run 42162198037 clip 10: attempts 1,2,4 = HTTP 400, attempt 3 = HTTP 200, then the
 # task failed on the copyright filter). Now taking the frame from the middle of the predecessor clip
 # (-ss 10), a different shot, most likely a non-face composition.
+# UPDATE 4: apt-get install of ffmpeg HANGS on some runners (run 42162198037 gen_chain2 all 3 jobs and
+# run 42164625077 clip 4: step "Установить ffmpeg" stuck 12-28 min on apt-get update). The install step
+# now has timeouts (120s update / 300s install, with retries) and never hangs or fails the job: if ffmpeg
+# stays unavailable, generation falls back to plain (the extraction step has continue-on-error).
 name: NiceAI Seedance 2.5 — Season 2 Episode 3 regen chain (ffmpeg fix)
 on:
   workflow_dispatch:
@@ -63,9 +67,17 @@ jobs:
           if command -v ffmpeg >/dev/null 2>&1; then
             echo "ffmpeg уже установлен: $(ffmpeg -version | head -n 1)"
           else
-            sudo apt-get update -qq
-            sudo apt-get install -y -qq ffmpeg
-            ffmpeg -version | head -n 1
+            echo "ffmpeg не найден, устанавливаю (apt с таймаутами, чтобы не зависать)..."
+            for attempt in 1 2 3; do
+              timeout 120 sudo apt-get update -qq && break || echo "apt-get update не удался (попытка $attempt)"
+              sleep 5
+            done
+            timeout 300 sudo apt-get install -y -qq ffmpeg || echo "Предупреждение: установить ffmpeg не удалось — генерация пойдёт без first_frame"
+            if command -v ffmpeg >/dev/null 2>&1; then
+              ffmpeg -version | head -n 1
+            else
+              echo "ffmpeg недоступен — генерация без first_frame"
+            fi
           fi
       - name: Извлечь кадр предшественника (10-я секунда, first_frame)
         continue-on-error: true
@@ -131,9 +143,17 @@ jobs:
           if command -v ffmpeg >/dev/null 2>&1; then
             echo "ffmpeg уже установлен: $(ffmpeg -version | head -n 1)"
           else
-            sudo apt-get update -qq
-            sudo apt-get install -y -qq ffmpeg
-            ffmpeg -version | head -n 1
+            echo "ffmpeg не найден, устанавливаю (apt с таймаутами, чтобы не зависать)..."
+            for attempt in 1 2 3; do
+              timeout 120 sudo apt-get update -qq && break || echo "apt-get update не удался (попытка $attempt)"
+              sleep 5
+            done
+            timeout 300 sudo apt-get install -y -qq ffmpeg || echo "Предупреждение: установить ffmpeg не удалось — генерация пойдёт без first_frame"
+            if command -v ffmpeg >/dev/null 2>&1; then
+              ffmpeg -version | head -n 1
+            else
+              echo "ffmpeg недоступен — генерация без first_frame"
+            fi
           fi
       - name: Извлечь кадр предшественника (10-я секунда, first_frame)
         continue-on-error: true
