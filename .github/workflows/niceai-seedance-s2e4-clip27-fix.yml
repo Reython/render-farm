@@ -1,0 +1,37 @@
+name: NiceAI Seedance S2E4 Clip 27 Fix
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        clip: [27]
+    env:
+      NICEAI_KEY: ${{ secrets.NICEAI_KEY }}
+      MODEL: seedance-2.5
+      SCRIPT_FILE: S2_EPISODE4_SCRIPT.md
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Check secret
+        run: |
+          if [ -z "$NICEAI_KEY" ]; then echo "::error::NICEAI_KEY secret is missing"; exit 1; fi
+          echo "NICEAI_KEY present (${#NICEAI_KEY} chars)"
+      - name: Generate clip ${{ matrix.clip }}
+        id: gen
+        run: bash scripts/niceai-gen-clip.sh ${{ matrix.clip }}
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: niceai-s2e4-clip-${{ matrix.clip }}
+          path: out/niceai-s2e4-clip-${{ matrix.clip }}.mp4
+          if-no-files-found: error
+          retention-days: 30
