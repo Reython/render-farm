@@ -1,0 +1,42 @@
+# Retry S2E3 clips 11 and 19 — both failed in run 42150138027 (copyright filter).
+# Same spec/helper as the main run: verbatim attempt, then softened rewording, up to 4 attempts.
+name: NiceAI Seedance 2.5 — Season 2 Episode 3 retry (clips 11, 19)
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  gen:
+    name: gen (clip ${{ matrix.clip }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 200
+    strategy:
+      fail-fast: false
+      max-parallel: 5
+      matrix:
+        clip: [11, 19]
+    env:
+      BASE_URL: https://api.niceai.rest/v1
+      USER_AGENT: Mozilla/5.0
+    steps:
+      - name: Checkout репозитория (S2_EPISODE3_SCRIPT.md)
+        uses: actions/checkout@v4
+      - name: Генерация клипа (до 4 попыток, fallback при copyright-фильтре, опрос, скачивание)
+        shell: bash
+        env:
+          NICEAI_KEY: ${{ secrets.NICEAI_KEY }}
+          SCRIPT_FILE: S2_EPISODE3_SCRIPT.md
+          PREFIX: s2e3
+          CLIP_N: ${{ matrix.clip }}
+        run: bash scripts/niceai-gen-clip.sh
+      - name: Загрузить артефакт niceai-s2e3-clip-N
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: niceai-s2e3-clip-${{ matrix.clip }}
+          path: |
+            s2e3-clip-${{ matrix.clip }}.log
+            create.json
+            status.json
+            body.json
+            s2e3-clip-${{ matrix.clip }}.mp4
