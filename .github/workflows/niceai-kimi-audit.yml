@@ -75,7 +75,7 @@ jobs:
           )
 
           payload = {
-              "model": "kimi-k3.1-pro",
+              "model": "kimi-k3-1-pro",
               "messages": [
                   {"role": "system", "content": "You are a senior JavaScript game-code auditor. Be precise, cite exact code locations, and never invent line content you did not see."},
                   {"role": "user", "content": prompt},
