@@ -1,0 +1,40 @@
+name: niceai-model-check
+on:
+  workflow_dispatch:
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Tiny model checks
+        env:
+          NICEAI_KEY: ${{ secrets.NICEAI_KEY_BUGFIX }}
+        run: |
+          cat > check.py << 'PYEOF'
+          import json, os, urllib.request, urllib.error
+          KEY = os.environ["NICEAI_KEY"]
+          UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36"
+          def call(model):
+              body = json.dumps({"model": model, "max_tokens": 8, "messages": [{"role": "user", "content": "Say OK"}]}).encode()
+              req = urllib.request.Request("https://api.niceai.rest/v1/chat/completions", data=body, method="POST")
+              req.add_header("Authorization", "Bearer " + KEY)
+              req.add_header("Content-Type", "application/json")
+              req.add_header("User-Agent", UA)
+              try:
+                  with urllib.request.urlopen(req, timeout=90) as r:
+                      data = json.loads(r.read().decode())
+                  print("MODEL", model, "STATUS ok")
+                  print(" usage:", json.dumps(data.get("usage")))
+                  print(" cost_field:", data.get("cost"), "| usage.cost:", (data.get("usage") or {}).get("cost"))
+                  print(" model_echo:", data.get("model"))
+              except urllib.error.HTTPError as e:
+                  print("MODEL", model, "HTTP", e.code, e.read().decode()[:300])
+              except Exception as e:
+                  print("MODEL", model, "ERROR", repr(e)[:300])
+          for m in ["kimi-k3-1-pro", "tencent-hy4", "hy4", "tencent/hy4"]:
+              call(m)
+          PYEOF
+          python3 check.py
