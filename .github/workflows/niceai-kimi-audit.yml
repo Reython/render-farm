@@ -81,7 +81,7 @@ jobs:
                   {"role": "user", "content": prompt},
               ],
               # Kimi spends output tokens on reasoning first - keep the cap large.
-              "max_tokens": 32768, "stream": true,
+              "max_tokens": 32768, "stream": True,
           }
           body = json.dumps(payload).encode("utf-8")
           req = urllib.request.Request(
