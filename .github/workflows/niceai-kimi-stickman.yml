@@ -1,0 +1,66 @@
+name: niceai-kimi-stickman
+on:
+  workflow_dispatch:
+jobs:
+  kimi:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Call Kimi via NiceAI (streaming)
+        env:
+          NICEAI_KEY: ${{ secrets.NICEAI_KEY_BUGFIX }}
+        run: |
+          cat > run.py << 'PYEOF'
+          import json, os, sys, urllib.request
+          html = open('audit/stickman-current.html', encoding='utf-8').read()
+          start = html.find('function drawFighter')
+          if start < 0:
+              print('drawFighter not found'); sys.exit(1)
+          pre_start = max(0, start - 9000)
+          i = html.find('{', start); depth = 0; end = None
+          for j in range(i, len(html)):
+              c = html[j]
+              if c == '{': depth += 1
+              elif c == '}':
+                  depth -= 1
+                  if depth == 0:
+                      end = j + 1; break
+          code = html[pre_start:start] + html[start:end]
+          print('extracted chars:', len(code))
+          spec = (
+          "You are rewriting the fighter renderer of a 2D stick-fighting game.\n"
+          "Replace the drawFighter function so the fighter is drawn as the classic SOLID BLACK stickman from the famous running-stickman reference:\n"
+          "- The ENTIRE body is one solid black silhouette: pure black (#000) fill and stroke everywhere. No outline around body parts, no accent colour, no skin tones.\n"
+          "- Head: one big filled black circle at the head joint. NO face at all (no eyes, no mouth) - the head is blank black.\n"
+          "- Torso: one thick black line/stroke from neck to pelvis.\n"
+          "- Arms: thick black strokes shoulder->elbow->wrist with round caps and round joins. The wrist round cap is the end of the arm - no hand/glove shapes.\n"
+          "- Legs: thick black strokes hip->knee->ankle with round caps. Legs END at the ankle - no foot/sole/shoe shapes.\n"
+          "- Proportions: head radius stays about 26 units; limb stroke width about 13-15 units.\n"
+          "- Overlapping parts merge into one silhouette because everything is the same black.\n"
+          "- Keep the function name drawFighter and its exact parameters. Keep every non-body element the current code draws (floor shadow, ultra aura, hit effects, swoosh, debug overlays, labels) working as before - only the body drawing changes.\n"
+          "- Do not change any pose, physics or gameplay code; you are only returning this one function (plus any tiny helper defined INSIDE it if needed).\n"
+          "Return ONLY the complete replacement JavaScript code for drawFighter in a single code block. No explanations."
+          )
+          prompt = spec + "\n\nCURRENT CODE (context before the function, then the current drawFighter):\n" + code
+          body = json.dumps({"model": "kimi-k3-1-pro", "stream": True, "max_tokens": 32000, "messages": [{"role": "user", "content": prompt}]}).encode()
+          req = urllib.request.Request("https://api.niceai.rest/v1/chat/completions", data=body, method="POST")
+          req.add_header("Authorization", "Bearer " + os.environ["NICEAI_KEY"])
+          req.add_header("Content-Type", "application/json")
+          req.add_header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36")
+          os.makedirs("out", exist_ok=True)
+          with urllib.request.urlopen(req, timeout=1500) as r, open("out/kimi-stream.txt", "wb") as f:
+              while True:
+                  chunk = r.read(65536)
+                  if not chunk: break
+                  f.write(chunk)
+          print("stream saved")
+          PYEOF
+          python3 run.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kimi-stickman-out
+          path: out/
