@@ -301,7 +301,7 @@ class Fighter{
   this.iq=iqProfile(m.iqOverrides?.[team]??def.iq);this.history=[];this.outcomes={hits:0,blocked:0,dodged:0,whiffs:0};this.failedApproach=0;this.pattern={};this.feintCd=3;this.lastObservedAction=null;this.stance=team==='A'?'orthodox':'southpaw';
   this.chooseSlots(slotOverride);this.dmgDealt=0;this.ultraMeter=0;this.ultraT=0;this.ultraBeat=0;this.ultraPulse=0;
   this.stunT=0;this.downT=0;this.reactionT=0;this.deathT=0;this.blockT=0;this.perfectT=0;this.counterT=0;this.counterSkill=null;
-  this.dodgeT=0;this.dodgeCd=0;this.jumpCd=0;this.pendingCounter=0;this.wasAir=false;this.getupT=0;this.dustT=0;this.hitFlash=0;this.dead=false;this.victory=false;this.gone=false;
+  this.dodgeT=0;this.dodgeCd=0;this.jumpCd=0;this.pendingCounter=0;this.armorT=0;this.wasAir=false;this.getupT=0;this.dustT=0;this.hitFlash=0;this.dead=false;this.victory=false;this.gone=false;
   this.combo=0;this.comboT=0;this.juggle=0;this.slowT=0;this.regenT=0;this.thinkT=0;this.memory=null;this.hitZone='torso';this.hitDir=0;
   this.per={...PERSONALITY[def.personality]};this.lastSkill='BASIC READY';this.attackHit=0;this.attackMiss=0;
   this.aiReact=this.iq.reaction+m.rng()*.07;this.strafe=m.rng()<.5?-1:1;
@@ -309,7 +309,12 @@ class Fighter{
   this.tactic={retreatT:0,retreated:false,retreatStart:0,lowHpLatch:false,fakeRetreatT:0,fakeUntil:0,feintUntil:0,punishUntil:0,punishSkill:null,lastPunish:-99,lastAttack:-99,rhythm:.25+m.rng()*.45,disengageUntil:0};this.lastWhiff=null;
   this.walk=0;this.idle=m.rng()*5;this.facing=this.face;this.turnT=0;this.motion={speed:0,phase:0,weight:0};this.pv={lean:0,crouch:0,bob:0,arms:.35,kick:0,spin:0,guard:0};this.stateT=0;this.renderPose=null;this.poseTarget=null;this.poseClock=0;
  }
- chooseSlots(override){if(override&&override.length){this.slots=override.slice(0,this.def.loadoutSize).map((n,i)=>({index:clamp(n|0,0,this.def.skills.length-1)}));return}
+ chooseSlots(override){if(override&&override.length){this.slots=override.slice(0,this.def.loadoutSize).map((n,i)=>({index:clamp(n|0,0,this.def.skills.length-1)}));
+  // A short override (e.g. ?loadoutA=0) must not shrink the kit below the
+  // fighter's slot count: fill the remaining slots by role score.
+  if(this.slots.length<this.def.loadoutSize){const roles=['rush','defense','finisher','counter'],used=this.slots.map(s=>s.index);
+   for(let i=this.slots.length;i<this.def.loadoutSize;i++){const candidates=this.def.skills.map((sk,index)=>({index,score:kitScore(this,sk,roles[i%roles.length])})).filter(x=>!used.includes(x.index)).sort((a,b)=>b.score-a.score);const chosen=candidates[0];this.slots.push({index:chosen.index});used.push(chosen.index)}}
+  return}
   const roles=['rush','defense','finisher','counter'],used=[];
   for(let i=0;i<this.def.loadoutSize;i++){const candidates=this.def.skills.map((sk,index)=>({index,score:kitScore(this,sk,roles[i%roles.length])})).filter(x=>!used.includes(x.index)).sort((a,b)=>b.score-a.score);const chosen=candidates[0];this.slots[i]={index:chosen.index};used.push(chosen.index)}
  }
@@ -331,8 +336,8 @@ class Fighter{
 
  slotSkill(i){const s=this.slots[i];return s?this.def.skills[s.index]:null}
  opponent(){return this.m.fighters.find(f=>f!==this&&!f.dead)}
- busy(){return this.action||this.swap||this.stunT>0||this.downT>0||this.ultraPulse>0||this.counterSkill}
- moveFactor(){return (this.st<=0?CONFIG.combat.exhaustedSpeed:1)*(this.slowT>0&&this.def.ultra.effect.indexOf('ignore stun')<0?.68:1)*(this.ultraT>0&&this.def.id==='Capoeira'?1.22:1)}
+ busy(){return this.action||this.swap||this.stunT>0||this.downT>0||this.getupT>0||this.ultraPulse>0||this.counterSkill}
+ moveFactor(){return (this.st<=0?CONFIG.combat.exhaustedSpeed:1)*(this.slowT>0&&!(this.ultraT>0&&this.def.ultra.effect.indexOf('ignore stun')>=0)?.68:1)*(this.ultraT>0&&this.def.id==='Capoeira'?1.22:1)}
  canAct(def){return !this.dead&&!this.busy()&&this.st>=def.cost&&!(def.type==='grab'&&this.opponent()&&this.opponent().downT>0)}
  spend(n){const discount=this.ultraT>0&&this.def.id==='Boxing'?.42:1;this.st=Math.max(0,this.st-n*discount);this.regenT=CONFIG.combat.baseRegenDelay}
  memoryEvent(event){this.lastWhiff=event;const iq=this.iq;if(this.tactic.feintUntil>this.m.t&&event.attacker===this.opponent()){this.tactics.baits++;this.m.stats.baits[this.id]=(this.m.stats.baits[this.id]||0)+1}if(iq.punish>.65){this.thinkT=0;if(this.tactic.feintUntil>this.m.t)this.tactic.punishUntil=this.m.t+1.0;this.tactic.punishKind='bait'}}
@@ -345,8 +350,8 @@ class Fighter{
   this.lastSkill=(feint?'FEINT: ': punished?'PUNISH: ':'')+def.name.toUpperCase();this.m.stats.uses[def.name]=(this.m.stats.uses[def.name]||0)+1;if(feint){this.m.stats.feints[this.id]=(this.m.stats.feints[this.id]||0)+1;this.feintCd=3.8}
   if(def.type==='block'){this.blockT=def.windup+def.active;this.perfectT=def.windup+CONFIG.combat.perfectWindow;this.counterT=def.fx.counter||0;this.tactics.blocks++}
   if(def.type==='counter'){this.counterT=def.windup+(def.fx.counter||.45);this.counterSkill=def;if(def.fx.dodge)this.dodgeT=def.fx.dodge}
-  if(def.type==='movement'&&def.fx.dodge)this.dodgeT=def.fx.dodge;
-  if(def.fx.armor)this.stunT=0;
+  if(def.fx.dodge)this.dodgeT=def.fx.dodge;
+  this.armorT=def.fx.armor||0;
   if(!this.m.silent)Audio2.play('whoosh');return true;
  }
  sidestep(){if(this.busy()||this.dodgeCd>0||this.st<CONFIG.combat.dodgeCost)return false;this.spend(CONFIG.combat.dodgeCost);
@@ -372,11 +377,11 @@ class Fighter{
    this.action={def:sk,slot:-1,elapsed:0,phase:'windup',dirX:this.face,hit:false,resolved:false};this.lastSkill=this.def.ultra.name+' ACTIVE'}
   if(this.ultraT<=0)this.lastSkill=this.def.ultra.name+' ENDED';
  }
- update(dt){this.hitFlash=Math.max(0,this.hitFlash-dt);this.reactionT=Math.max(0,this.reactionT-dt);if(this.dead){this.deathT+=dt;return}if(this.victory){this.idle+=dt;this.pv.bob=Math.abs(Math.sin(this.idle*6))*9;return}
+ update(dt){this.reactionT=Math.max(0,this.reactionT-dt);if(this.dead){this.deathT+=dt;return}if(this.victory){this.idle+=dt;this.pv.bob=Math.abs(Math.sin(this.idle*6))*9;return}
   this.stateT+=dt;this.dodgeT=Math.max(0,this.dodgeT-dt);this.dodgeCd=Math.max(0,this.dodgeCd-dt);this.jumpCd=Math.max(0,this.jumpCd-dt);this.hitFlash=Math.max(0,this.hitFlash-dt);this.swapDwell=Math.max(0,this.swapDwell-dt);this.feintCd=Math.max(0,this.feintCd-dt);
   if(this.swap){this.swap.t-=dt;this.state='swap';if(this.swap.t<=1e-9)this.finishSwap()}
   this.slowT=Math.max(0,this.slowT-dt);this.ultraPulse=Math.max(0,this.ultraPulse-dt);this.comboT-=dt;if(this.comboT<=0)this.combo=0;
-  this.blockT=Math.max(0,this.blockT-dt);this.perfectT=Math.max(0,this.perfectT-dt);this.counterT=Math.max(0,this.counterT-dt);if(this.counterT<=0)this.counterSkill=null;
+  this.blockT=Math.max(0,this.blockT-dt);this.perfectT=Math.max(0,this.perfectT-dt);this.counterT=Math.max(0,this.counterT-dt);this.armorT=Math.max(0,this.armorT-dt);if(this.counterT<=0)this.counterSkill=null;
   if(this.juggle>0&&this.y===0&&this.downT<=0)this.juggle=Math.max(0,this.juggle-dt*2);
   for(const id in this.cooldowns)this.cooldowns[id]=Math.max(0,this.cooldowns[id]-dt);
   if(this.rollT>0&&CONFIG.combat.slotRoll>0){this.rollT-=dt;if(this.rollT<=0)this.rollT=CONFIG.combat.slotRoll}
@@ -396,7 +401,7 @@ class Fighter{
   else if(this.ultraT>0&&['Taekwondo','Judo','Kung Fu'].includes(this.id))this.vx=this.face*(this.id==='Taekwondo'?4.7:3.5);
   else this.vx=lerp(this.vx,this.intent.mx*this.def.stats.moveSpeed*this.moveFactor()*mobility,clamp(dt*9,0,1));
   this.vz=lerp(this.vz,this.intent.mz*this.def.stats.moveSpeed*.78*this.moveFactor()*mobility,clamp(dt*9,0,1));
-  if(this.dodgeT>0)this.vz=this.strafe*5.5;
+  if(this.dodgeT>0&&(!this.action||this.action.def.type!=='strike'))this.vz=this.strafe*5.5;
   this.x+=this.vx*dt;this.z+=this.vz*dt;
   if(this.face!==this.facing){this.facing=this.face;this.turnT=.20}
   this.turnT=Math.max(0,this.turnT-dt);this.motion.speed=lerp(this.motion.speed,Math.hypot(this.vx,this.vz),1-Math.exp(-10*dt));
@@ -416,7 +421,7 @@ class Fighter{
   if(a.phase==='active'){if(d.type==='strike'||d.type==='grab')this.tryHit();if(a.elapsed>=d.windup+d.active){a.phase='recovery';if(!a.hit){this.attackMiss++;this.m.stats.misses[d.name]=(this.m.stats.misses[d.name]||0)+1;a.resolved=true;this.opponent()?.memoryEvent({kind:'whiff',attacker:this,skill:d,time:this.m.t})}}}
   if(a.phase==='recovery'&&a.elapsed>=d.windup+d.active+d.recovery){this.action=null;this.basicWait=.04;this.state='approach'}
  }
- tryHit(){const a=this.action;if(!a||a.hit)return;const foe=this.opponent();if(!foe||foe.dead)return;const d=a.def;if(!inZone(foe,zone(this,d,a.dirX)))return;
+ tryHit(){const a=this.action;if(!a||a.hit||a.rejected)return;const foe=this.opponent();if(!foe||foe.dead)return;const d=a.def;if(!inZone(foe,zone(this,d,a.dirX)))return;
   if(foe.y>.85&&d.type!=='grab')return;
   const current=poseRig(this,0),victim=poseRig(foe,0),boxes=worldHurtboxes(foe,victim);
   // Fast active limbs use a short swept sequence inside this fixed simulation step.
@@ -429,10 +434,11 @@ class Fighter{
    const attack=worldAttackHitbox(this,interp);if(attack)contact=collisionHit(this,foe,attack,boxes);
   }
   a.lastHitbox=current;a.contact=contact||null;if(!contact)return;
+  const applied=this.m.applyHit(this,foe,d.damage*this.def.stats.damageMult,d,{slot:a.slot,zone:contact.zone});
+  if(!applied){a.rejected=true;return}
   a.hit=true;this.attackHit++;this.m.stats.hits[d.name]=(this.m.stats.hits[d.name]||0)+1;
   if(a.punished)this.m.stats.successfulPunishes[this.id]=(this.m.stats.successfulPunishes[this.id]||0)+1;
   if(a.feintPunish)this.m.stats.successfulFeintPunishes[this.id]=(this.m.stats.successfulFeintPunishes[this.id]||0)+1;
-  this.m.applyHit(this,foe,d.damage*this.def.stats.damageMult,d,{slot:a.slot,zone:contact.zone});
  }
  pose(){const P=this.pv;let lean=0,crouch=.06,guard=.28,kick=0,spin=0,arms=.35;
   const sp=Math.hypot(this.vx,this.vz);if(sp>.2){arms=.35+Math.sin(this.walk)*.22;lean=this.face*this.vx*.025}
@@ -542,7 +548,7 @@ function aiThink(m,f){
  const bd=basicDef(f);
  if((recover||whiff)&&adx<bd.range&&adz<bd.zTol&&f.basicWait<=0){f.beginPunish(bd,whiff?'whiff':'recovery');if(f.startAction(bd)){T.rhythm=m.t+.2;return}}
  if(f.feintCd<=0&&iq.feint>0&&adx<1.65&&adz<.8&&f.st>30&&m.rng()<iq.feint*1.9){const o=slots.filter(o=>o.sk.damage>0).sort((a,b)=>a.sk.cost-b.sk.cost)[0];if(o&&f.startAction(o.sk,o.i,true))return}
- if(iq.value>=65&&T.fakeUntil<=0&&m.t>5&&adx<1.45&&f.st>45&&m.rng()<.025*iq.adaptation){T.fakeUntil=m.t+5;T.fakeRetreatT=.45;f.tactics.fakeRetreats++;return}
+ if(iq.value>=65&&T.fakeUntil<=m.t&&m.t>5&&adx<1.45&&f.st>45&&m.rng()<.025*iq.adaptation){T.fakeUntil=m.t+5;T.fakeRetreatT=.45;f.tactics.fakeRetreats++;return}
  if(adx<bd.range&&adz<bd.zTol&&f.basicWait<=0&&f.st>=bd.cost&&m.t>=T.rhythm){f.basicWait=bd.recovery+.12;f.basicIndex++;if(f.startAction(bd)){T.rhythm=m.t+.15+m.rng()*.28;return}}
  f.basicWait=Math.max(0,f.basicWait-f.aiReact);
  if(f.st<f.per.retreat*(1.5-iq.discipline*.5)||adx<.70&&f.st<25){f.state='retreat';f.intent.mx=selfEdge<.6?-Math.sign(f.x):-Math.sign(dx)*.8;f.intent.mz=-Math.sign(dz||f.strafe)*.25;return}
@@ -580,6 +586,10 @@ class Match{
   this.pops=[];this.toasts=[];this.dir=new DramaDirector(this);this.stats={uses:{},hits:{},misses:{},ultras:{},swaps:{},feints:{},baits:{},punishes:{},whiffPunishes:{},feintPunishes:{},successfulPunishes:{},successfulFeintPunishes:{},retreats:{},reengagements:{},outcomes:[],dodges:0,zDodges:0};this.iqOverrides=entry.iq||null;this.aiUrgency=1;
   const da=FIGHTER_MAP[entry.a]||FIGHTERS[0],db=FIGHTER_MAP[entry.b]||FIGHTERS[1];
   this.fighters=[new Fighter(this,da,'A',-1.45,-.35,entry.loadoutA??entry.slotsA),new Fighter(this,db,'B',1.45,.35,entry.loadoutB??entry.slotsB)];
+  // kitScore() reads the opponent via m.fighters, which only exists after both
+  // Fighter constructors have run; re-pick automatic kits opponent-aware.
+  if((entry.loadoutA??entry.slotsA)==null)this.fighters[0].chooseSlots();
+  if((entry.loadoutB??entry.slotsB)==null)this.fighters[1].chooseSlots();
   this.nameA=da.name;this.nameB=db.name;
  }
  aiThink(f){aiThink(this,f)}
@@ -596,7 +606,7 @@ class Match{
   if(vic.downT>0&&vic.juggle>=CONFIG.combat.juggleMax)return false;
   let blocked=vic.blockT>0&&Math.sign(att.x-vic.x)===vic.face,perfect=blocked&&vic.perfectT>0;
   const counter=vic.counterT>0&&vic.counterSkill;
-   if(counter&&!opt.ultra){const counterSkill=vic.counterSkill;vic.counterSkill=null;vic.counterT=0;vic.ultraMeter=clamp(vic.ultraMeter+20,0,100);
+   if(counter&&!opt.ultra){const counterSkill=vic.counterSkill;vic.counterSkill=null;vic.counterT=0;vic.pendingCounter=0;vic.ultraMeter=clamp(vic.ultraMeter+20,0,100);
    this.popupDmg(vic.x,vic.z,'COUNTER!',true,false,'#fff38a');
    const counterDef={...counterSkill,damage:counterSkill.damage||18,fx:{...counterSkill.fx,kb:1.0,stun:.30}};
    vic.face=Math.sign(att.x-vic.x)||vic.face;
@@ -607,7 +617,7 @@ class Match{
   }
   if(blocked)att.recordOutcome('blocked',def,vic);else att.recordOutcome('hit',def,vic);
   if(blocked){raw*=1-CONFIG.combat.blockReduction;if(perfect){vic.ultraMeter=clamp(vic.ultraMeter+16,0,100);vic.counterT=.48;vic.counterSkill={name:'Perfect Counter',type:'counter',damage:18,range:1.45,zTol:.9,shape:'sweep',anim:'cross',fx:{stun:.35,kb:.7},cost:0};vic.pendingCounter=.13;this.popupDmg(vic.x,vic.z,'PERFECT',false,true,'#fff');if(!this.silent)Audio2.play('block')}}
-  const berserk=vic.def.id==='Wrestling'&&vic.ultraT>0,kime=att.def.id==='Karate'&&att.ultraT>0;
+  const berserk=vic.def.id==='Wrestling'&&vic.ultraT>0,armored=vic.armorT>0,kime=att.def.id==='Karate'&&att.ultraT>0;
   let crit=this.rng()<CONFIG.combat.critChance;if(kime&&opt.counter)crit=true;
   if(crit)raw*=CONFIG.combat.critMult;
   if(opt.counter)raw*=CONFIG.combat.counterMult;if(att.ultraT>0&&att.def.id==='Wrestling')raw*=1.28;
@@ -615,8 +625,9 @@ class Match{
   raw*=this.dir.dealt[att.team]||1;raw*=1-vic.def.stats.defense;raw=Math.max(1,Math.round(raw));vic.hp-=raw;att.dmgDealt+=raw;
   this.dir.onDamage();this.stats.lastHit={a:att.id,v:vic.id,d:raw,t:this.t};
   const combo=att.comboT>0?att.combo:0;att.combo=combo+1;att.comboT=1.15;att.ultraMeter=clamp(att.ultraMeter+raw*.23+(att.combo>=3?4:0),0,100);vic.ultraMeter=clamp(vic.ultraMeter+raw*.32,0,100);
-  if(!berserk){let stun=(def.fx.stun||.17)*(1-vic.def.stats.stunResist);if(blocked)stun*=.35;vic.stunT=Math.max(vic.stunT,stun);
+  if(!berserk&&!armored){let stun=(def.fx.stun||.17)*(1-vic.def.stats.stunResist);if(blocked)stun*=.35;vic.stunT=Math.max(vic.stunT,stun);
    const kb=(def.fx.kb||.2)*(blocked?.18:1);vic.vx+=att.face*kb*2.4;vic.vz+=(vic.z-att.z)*kb*.6;
+   if(def.fx.pull&&!blocked){const pdx=att.x-vic.x,pdz=att.z-vic.z,pd=Math.hypot(pdx,pdz);if(pd>.62){const amt=Math.min(def.fx.pull,pd-.62);vic.x+=pdx/pd*amt;vic.z+=pdz/pd*amt}}
    if(def.fx.launch&&!blocked&&vic.juggle<CONFIG.combat.juggleMax){vic.vy=def.fx.launch;vic.juggle++}
    if(def.fx.down&&!blocked){vic.downT=Math.max(vic.downT,def.fx.down*CONFIG.combat.knockdown);vic.action=null;vic.juggle=0}
    if(def.fx.slow)vic.slowT=def.fx.slow;
@@ -834,7 +845,7 @@ function poseRig(f,dt=1/60){
   const limb=attackLimb(a),arm=limb.kind==='arm',side=a.def.anim==='jab'||['crane','armDrag','gripBreak','anklePick','sprawl'].includes(a.def.anim)?'L':'R',rootName=arm?'shoulder'+side:'hip'+side;
   const endName=limb.end,jointName=limb.start,root=j[rootName];
   const fore=jointName.startsWith('upperArm')?'forearm'+side:'shin'+side,upper=jointName.startsWith('shin')?'thigh'+side:jointName;
-  const l1=BONES[upper].length,l2=BONES[fore].length,distal=BONES[endName].length,frac=arm?.8:.82;
+  const l1=BONES[upper].length,l2=BONES[fore].length,distal=endName===fore?0:BONES[endName].length,frac=arm?.8:.82;
   // The wrist/ankle-to-hand/foot segment is real geometry, never a zero-length
   // endpoint. Solve to the wrist/ankle, then extend the rigid hand/foot segment.
   const foe=f.opponent();let targetBody=foe?(foe.rigCache||foe.localRig):null;
@@ -878,14 +889,12 @@ function poseRig(f,dt=1/60){
    const wrist=sol.end;
    j[fore]={...wrist,a:a2,parent:j[upper]};
    j[endName]={x:wrist.x+dir.x*distal,y:wrist.y+dir.y*distal,z:wrist.z+dir.z*distal,a:a2,parent:j[fore],ankle:{...wrist}};
+   if(endName===fore){const handName='hand'+side;j[handName]={x:wrist.x+dir.x*BONES[handName].length,y:wrist.y+dir.y*BONES[handName].length,z:(wrist.z||0)+dir.z*BONES[handName].length,a:a2,parent:j[fore]}}
   }
   const contactJoint=j[fore];j.targetResidual=sol.reachable?0:sol.residual;j.strikeTarget=endGoal;j.strikeContact={x:contactJoint.x+dir.x*distal*.82,y:contactJoint.y+dir.y*distal*.82,z:contactJoint.z+dir.z*distal*.82};
  }
  j.headR=26;j.pose=P;j.mirror=1;j.plants=f.footState;j.modelUnit=RIG.unit;return j;
 }
-const OUTFITS={
- taekwondo:{top:'#f4f3ee',pants:'#f4f3ee',skin:'#edc4a2',gi:true,belt:true},boxing:{top:'#edc4a2',pants:'#efefeb',skin:'#edc4a2',shorts:true,gloves:true},wrestling:{top:'#e7e8e4',pants:'#edc4a2',skin:'#edc4a2',singlet:true},'muay thai':{top:'#edc4a2',pants:'#eeeeea',skin:'#edc4a2',shorts:true,wraps:true},'muaythai':{top:'#edc4a2',pants:'#eeeeea',skin:'#edc4a2',shorts:true,wraps:true},judo:{top:'#f1f1ec',pants:'#f1f1ec',skin:'#edc4a2',gi:true,belt:true},karate:{top:'#faf9f2',pants:'#faf9f2',skin:'#edc4a2',gi:true,belt:true},capoeira:{top:'#edc4a2',pants:'#f4f2e9',skin:'#edc4a2',belt:true},'kung fu':{top:'#dedfdc',pants:'#e9e9e3',skin:'#edc4a2',gi:true,belt:true},kungfu:{top:'#dedfdc',pants:'#e9e9e3',skin:'#edc4a2',gi:true,belt:true}
-};
 function capsule(ctx,a,b,width,fill,outline=4){if(!a||!b||![a.x,a.y,b.x,b.y,width].every(Number.isFinite))return;
  const dx=b.x-a.x,dy=b.y-a.y;if(Math.hypot(dx,dy)<.001){ctx.fillStyle=fill;ctx.strokeStyle='#080b0e';ctx.lineWidth=outline*2;ctx.beginPath();ctx.arc(a.x,a.y,width*.5,0,TAU);ctx.fill();ctx.stroke();return}
  ctx.strokeStyle='#080b0e';ctx.lineWidth=width+outline*2;ctx.lineCap='round';ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke();ctx.strokeStyle=fill;ctx.lineWidth=width;ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke()}
@@ -934,34 +943,33 @@ function expression(ctx,f,S){const x=S.head.x,y=S.head.y,r=S.headR,face=S.pose.f
  else if(face==='blank'){for(const s of [-1,1]){ctx.beginPath();ctx.arc(x+s*10,y-3,2.5,0,TAU);ctx.fill()}ctx.beginPath();ctx.moveTo(x-5,y+10);ctx.lineTo(x+5,y+10);ctx.stroke()}
  else{for(const s of [-1,1]){ctx.beginPath();ctx.moveTo(x+s*15,y-10);ctx.lineTo(x+s*4,y-6);ctx.stroke();ctx.beginPath();ctx.arc(x+s*9,y-2,2.5,0,TAU);ctx.fill()}ctx.beginPath();ctx.moveTo(x-6,y+11);ctx.lineTo(x+6,y+11);ctx.stroke()}
 }
-function drawFighter(ctx,f){const p=Camera.project(f.x,f.z,f.y),S=f.rigCache||poseRig(f,0),scale=p.s/122,O=OUTFITS[f.def.outfit]||OUTFITS.taekwondo;
+function drawFighter(ctx,f){const p=Camera.project(f.x,f.z,f.y),S=f.rigCache||poseRig(f,0),scale=p.s/122;
  const foot=Camera.project(f.x,f.z,0);ctx.fillStyle='rgba(0,0,0,.38)';ctx.beginPath();ctx.ellipse(foot.x,foot.y+5,31*scale,9*scale,0,0,TAU);ctx.fill();
  ctx.save();ctx.translate(p.x,p.y);ctx.scale(scale*f.face*S.mirror,scale);
  if(f.ultraT>0){ctx.save();ctx.globalAlpha=.28;ctx.strokeStyle=f.col;ctx.lineWidth=14;ctx.shadowColor=f.col;ctx.shadowBlur=18;ctx.beginPath();ctx.ellipse(0,-92,48,98,0,0,TAU);ctx.stroke();ctx.restore()}
- // Back limbs first. Thin bone + wider outfit capsule = readable short proportions.
- for(const side of ['L','R']){const armColor=O.gi?O.top:O.skin;capsule(ctx,S['shoulder'+side],S['upperArm'+side],O.gi?15:10,armColor);capsule(ctx,S['upperArm'+side],S['forearm'+side],O.gi?13:9,armColor);capsule(ctx,S['forearm'+side],S['hand'+side],9,O.skin);
-  capsule(ctx,S['hip'+side],S['thigh'+side],O.shorts?19:22,O.pants);capsule(ctx,S['thigh'+side],S['shin'+side],O.shorts?16:20,O.pants);
-  const foot=S['foot'+side],ankle=S['shin'+side];ctx.fillStyle='#080b0e';ctx.beginPath();ctx.ellipse((ankle.x+foot.x)/2,(ankle.y+foot.y)/2+3,13,8,Math.atan2(foot.y-ankle.y,foot.x-ankle.x),0,TAU);ctx.fill();
-  const hand=S['hand'+side],wrist=S['forearm'+side];ctx.fillStyle=O.gloves?f.col:'#080b0e';ctx.beginPath();ctx.ellipse(hand.x,hand.y,O.gloves?12:9,O.gloves?11:8,Math.atan2(hand.y-wrist.y,hand.x-wrist.x),0,TAU);ctx.fill();
+ // Classic stickman drawn straight from the skeleton joints: thick
+ // round-capped capsules in the fighter colour with a black outline. The
+ // wrist joint IS the hand and the ankle joint IS the foot — there is no
+ // separate hand/foot segment geometry, so a limb cannot stretch or detach.
+ const col=f.col;
+ for(const side of ['L','R']){
+  capsule(ctx,S['hip'+side],S['thigh'+side],14,col,3);
+  capsule(ctx,S['thigh'+side],S['shin'+side],12,col,3);
+  const ank=S['shin'+side],toe=S['foot'+side];
+  if(toe&&(Math.abs(toe.x-ank.x)>.5||Math.abs(toe.y-ank.y)>.5))capsule(ctx,ank,toe,9,col,3);
  }
- capsule(ctx,S.pelvis,S.chest,26,O.top);capsule(ctx,S.chest,S.neck,22,O.top);capsule(ctx,S.neck,S.head,10,O.skin);
- for(const side of ['L','R'])if(S['clavicle'+side])capsule(ctx,S['clavicle'+side],S['shoulder'+side],7,O.gi?O.top:O.skin,2);
- if(O.gi){ctx.fillStyle='#c5c8c6';ctx.strokeStyle='#080b0e';ctx.lineWidth=3;ctx.beginPath();ctx.moveTo(S.neck.x-10,S.neck.y);ctx.lineTo(S.pelvis.x+3,S.pelvis.y-5);ctx.lineTo(S.neck.x+11,S.neck.y);ctx.closePath();ctx.fill();ctx.stroke()}
- if(O.singlet){ctx.strokeStyle=f.col;ctx.lineWidth=7;ctx.beginPath();ctx.moveTo(S.chest.x-11,S.chest.y);ctx.lineTo(S.pelvis.x-8,S.pelvis.y);ctx.moveTo(S.chest.x+11,S.chest.y);ctx.lineTo(S.pelvis.x+8,S.pelvis.y);ctx.stroke()}
- if(O.belt){const b=S.pelvis;capsule(ctx,{x:b.x-16,y:b.y-2},{x:b.x+16,y:b.y-2},7,f.col,2);ctx.fillStyle=f.col;ctx.strokeStyle='#080b0e';ctx.lineWidth=2.5;ctx.beginPath();ctx.arc(b.x,b.y,6,0,TAU);ctx.fill();ctx.stroke();const swing=Math.sin(f.walk)*7+f.vx*3;
-  for(const s of [-1,1]){const mid={x:b.x+s*5+swing*.35,y:b.y+17},end={x:b.x+s*9+swing,y:b.y+34};capsule(ctx,b,mid,5,f.col,1.5);capsule(ctx,mid,end,5,f.col,1.5)}}
- if(O.shorts){ctx.strokeStyle=f.col;ctx.lineWidth=5;ctx.beginPath();ctx.moveTo(S.pelvis.x-15,S.pelvis.y+3);ctx.lineTo(S.pelvis.x+15,S.pelvis.y+3);ctx.stroke()}
- if(O.wraps){for(const side of ['L','R'])capsule(ctx,S['forearm'+side],S['hand'+side],10,f.col,2)}
- ctx.fillStyle=O.skin;ctx.strokeStyle='#080b0e';ctx.lineWidth=5;ctx.beginPath();ctx.arc(S.head.x,S.head.y,S.headR,0,TAU);ctx.fill();ctx.stroke();expression(ctx,f,S);
+ for(const side of ['L','R']){
+  capsule(ctx,S['shoulder'+side],S['upperArm'+side],11,col,3);
+  capsule(ctx,S['upperArm'+side],S['forearm'+side],10,col,3);
+ }
+ capsule(ctx,S.neck,S.pelvis,20,col,3);
+ ctx.fillStyle=col;ctx.strokeStyle='#080b0e';ctx.lineWidth=5;ctx.beginPath();ctx.arc(S.head.x,S.head.y,S.headR,0,TAU);ctx.fill();ctx.stroke();expression(ctx,f,S);
  if(f.stunT>.25){ctx.fillStyle='#e9c742';for(let i=0;i<3;i++){const a=f.idle*4+i*TAU/3;ctx.beginPath();ctx.arc(S.head.x+Math.cos(a)*35,S.head.y-28+Math.sin(a)*7,3,0,TAU);ctx.fill()}}
  if(f.action&&f.action.phase==='active'){
   const limb=attackLimb(f.action),side=limb.end.endsWith('L')?'L':'R';
   if(limb.kind==='arm'){
-   const armColor=O.gi?O.top:O.skin;
-   capsule(ctx,S['shoulder'+side],S['upperArm'+side],O.gi?15:10,armColor);
-   capsule(ctx,S['upperArm'+side],S['forearm'+side],O.gi?13:9,armColor);
-   capsule(ctx,S['forearm'+side],S['hand'+side],9,O.skin);
-   const hand=S['hand'+side],wrist=S['forearm'+side];ctx.fillStyle=O.gloves?f.col:'#080b0e';ctx.beginPath();ctx.ellipse(hand.x,hand.y,O.gloves?12:9,O.gloves?11:8,Math.atan2(hand.y-wrist.y,hand.x-wrist.x),0,TAU);ctx.fill();
+   capsule(ctx,S['shoulder'+side],S['upperArm'+side],11,col,3);
+   capsule(ctx,S['upperArm'+side],S['forearm'+side],10,col,3);
   }
   ctx.save();ctx.globalAlpha=.6;ctx.strokeStyle=f.col;ctx.lineWidth=6;ctx.beginPath();ctx.arc(0,-80,65,-1.5,.5);ctx.stroke();ctx.restore();
  }
@@ -1184,9 +1192,9 @@ function tacticalScenarios(){
 }
 function runIQBalance(){let high=0,total=0;const matches=[];const pairs=FIGHTERS.map(f=>[f.id,f.id]);
  for(let swap=0;swap<2;swap++)for(let i=0;i<pairs.length;i++)for(let seed=0;seed<6;seed++){
-  const a=pairs[i][0],b=pairs[i][1],m=simulate(new Match({a,b,iq:swap?{A:22,B:96}:{A:96,B:22}},91000+seed*123+i*43,{silent:true}));const winner=m.winner==='A'?(swap?'low':'high'):(swap?'high':'low');if(winner==='high')high++;total++;matches.push({a,b,swap,seed,winner:m.winner,highWin:winner==='high',time:m.t});
+  const a=pairs[i][0],b=pairs[i][1],m=simulate(new Match({a,b,iq:swap?{A:22,B:96}:{A:96,B:22}},91000+seed*123+i*43,{silent:true}));const winner=m.winner==='A'?(swap?'low':'high'):m.winner==='B'?(swap?'high':'low'):null;if(winner==='high')high++;if(winner)total++;matches.push({a,b,swap,seed,winner:m.winner,highWin:winner?winner==='high':null,time:m.t});
  }
- return {high,total,rate:high/total,matches};
+ return {high,total,draws:matches.filter(x=>!x.winner).length,rate:total?high/total:0,matches};
 }
 function ruleFixtures(){const out=[];
  let m=new Match({a:'Taekwondo',b:'Boxing',slotsA:[0,1]},1001,{silent:true}),a=m.fighters[0];a.thinkT=999;a.st=0;const exhausted=!a.startAction(a.def.skills[0]);a.st=50;
