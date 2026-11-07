@@ -1,0 +1,131 @@
+name: niceai-kimi-audit
+
+# Audits the Stick Arena game HTML for NEW bugs with kimi-k3.1-pro via NiceAI.
+# Requires repo secret: NICEAI_KEY_BUGFIX
+# Requires these files committed in the repo (paths adjustable via inputs):
+#   audit/stickman-arena-sim.html, audit/README.md, audit/BUGFIX_REPORT.md
+
+on:
+  workflow_dispatch:
+    inputs:
+      game_path:
+        description: "Path to the game HTML in this repo"
+        required: true
+        default: "audit/stickman-arena-sim.html"
+        type: string
+      readme_path:
+        description: "Path to the game README in this repo"
+        required: true
+        default: "audit/README.md"
+        type: string
+      report_path:
+        description: "Path to the previous BUGFIX_REPORT in this repo"
+        required: true
+        default: "audit/BUGFIX_REPORT.md"
+        type: string
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Call kimi-k3.1-pro via NiceAI
+        env:
+          NICEAI_KEY: ${{ secrets.NICEAI_KEY_BUGFIX }}
+          GAME_PATH: ${{ inputs.game_path }}
+          README_PATH: ${{ inputs.readme_path }}
+          REPORT_PATH: ${{ inputs.report_path }}
+        run: |
+          python3 - <<'PYEOF'
+          import json, os, sys, urllib.request, urllib.error
+
+          key = os.environ.get("NICEAI_KEY", "").strip()
+          if not key:
+              sys.exit("NICEAI_KEY_BUGFIX secret is empty or missing")
+
+          def read(path):
+              with open(path, encoding="utf-8") as fh:
+                  return fh.read()
+
+          game = read(os.environ["GAME_PATH"])
+          readme = read(os.environ["README_PATH"])
+          report = read(os.environ["REPORT_PATH"])
+          print(f"game={len(game)} chars, readme={len(readme)} chars, report={len(report)} chars")
+
+          prompt = (
+              "You are a senior JS game-code auditor. Find NEW bugs in the attached single-file "
+              "HTML5 Canvas game (Stick Arena) that are NOT listed in the attached BUGFIX_REPORT "
+              "(those 30 defects are already fixed and verified - do not re-report them).\n\n"
+              "Hunt for: runtime errors, undefined references, logic errors, broken skill/pose "
+              "bindings (FIGHTERS / EXTRA_SKILLS skill definitions vs the POSES / POSE_ALIAS "
+              "tables), dead or never-consumed effect fields, AI / state-machine defects, "
+              "cooldown / loadout indexing errors, and the documented balance outliers "
+              "(Muay Thai ~82% win rate is too strong, Boxing ~27% is too weak - diagnose likely "
+              "root causes in stats/skills/AI and propose minimal numeric fixes).\n\n"
+              "For each bug give: severity (critical/major/minor), exact location (function name "
+              "and the surrounding code context so it can be found in the file), root cause, and "
+              "a concrete minimal patch as a unified diff against the HTML file. If you are not "
+              "sure a patch is correct, say so explicitly instead of guessing. End with a short "
+              "summary table of all findings.\n\n"
+              "===== BUGFIX_REPORT (already fixed - do NOT re-report) =====\n" + report +
+              "\n\n===== README =====\n" + readme +
+              "\n\n===== GAME FILE: stickman-arena-sim.html =====\n" + game
+          )
+
+          payload = {
+              "model": "kimi-k3.1-pro",
+              "messages": [
+                  {"role": "system", "content": "You are a senior JavaScript game-code auditor. Be precise, cite exact code locations, and never invent line content you did not see."},
+                  {"role": "user", "content": prompt},
+              ],
+              # Kimi spends output tokens on reasoning first - keep the cap large.
+              "max_tokens": 32768,
+          }
+          body = json.dumps(payload).encode("utf-8")
+          req = urllib.request.Request(
+              "https://api.niceai.rest/v1/chat/completions",
+              data=body,
+              headers={
+                  "Authorization": "Bearer " + key,
+                  "Content-Type": "application/json",
+              },
+              method="POST",
+          )
+          try:
+              with urllib.request.urlopen(req, timeout=1500) as resp:
+                  raw = resp.read().decode("utf-8", "replace")
+          except urllib.error.HTTPError as e:
+              raw = e.read().decode("utf-8", "replace")
+              print(f"HTTP {e.code}: {raw[:2000]}")
+              with open("kimi-audit-response.json", "w", encoding="utf-8") as fh:
+                  fh.write(raw)
+              sys.exit(f"NiceAI request failed with HTTP {e.code}")
+
+          with open("kimi-audit-response.json", "w", encoding="utf-8") as fh:
+              fh.write(raw)
+          data = json.loads(raw)
+          choice = (data.get("choices") or [{}])[0]
+          content = (choice.get("message") or {}).get("content") or ""
+          usage = data.get("usage") or {}
+          print("finish_reason:", choice.get("finish_reason"))
+          print("usage:", json.dumps(usage))
+          print("content chars:", len(content))
+          with open("kimi-audit.md", "w", encoding="utf-8") as fh:
+              fh.write("# Kimi K3.1 Pro audit - Stick Arena (new bugs only)\n\n")
+              fh.write(f"finish_reason: {choice.get('finish_reason')} | usage: {json.dumps(usage)}\n\n---\n\n")
+              fh.write(content)
+          if not content:
+              sys.exit("Kimi returned empty content (raise max_tokens or retry)")
+          PYEOF
+
+      - name: Upload audit result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kimi-audit
+          path: |
+            kimi-audit.md
+            kimi-audit-response.json
+          if-no-files-found: warn
