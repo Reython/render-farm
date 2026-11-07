@@ -81,7 +81,7 @@ jobs:
                   {"role": "user", "content": prompt},
               ],
               # Kimi spends output tokens on reasoning first - keep the cap large.
-              "max_tokens": 32768,
+              "max_tokens": 32768, "stream": true,
           }
           body = json.dumps(payload).encode("utf-8")
           req = urllib.request.Request(
@@ -95,7 +95,7 @@ jobs:
           )
           try:
               with urllib.request.urlopen(req, timeout=1500) as resp:
-                  raw = resp.read().decode("utf-8", "replace")
+                  stream_text = resp.read().decode("utf-8", "replace")
           except urllib.error.HTTPError as e:
               raw = e.read().decode("utf-8", "replace")
               print(f"HTTP {e.code}: {raw[:2000]}")
@@ -103,21 +103,21 @@ jobs:
                   fh.write(raw)
               sys.exit(f"NiceAI request failed with HTTP {e.code}")
 
-          with open("kimi-audit-response.json", "w", encoding="utf-8") as fh:
-              fh.write(raw)
-          data = json.loads(raw)
-          choice = (data.get("choices") or [{}])[0]
-          content = (choice.get("message") or {}).get("content") or ""
-          usage = data.get("usage") or {}
-          print("finish_reason:", choice.get("finish_reason"))
-          print("usage:", json.dumps(usage))
-          print("content chars:", len(content))
+          with open("kimi-audit-stream.txt", "w", encoding="utf-8") as fh:
+              fh.write(stream_text)
+          chunks = [json.loads(l.strip()[5:]) for l in stream_text.splitlines() if l.strip().startswith("data: {")]
+          deltas = [(c.get("choices") or [{}])[0].get("delta") or {} for c in chunks]
+          content = "".join(d.get("content") or "" for d in deltas)
+          reasoning = "".join(d.get("reasoning_content") or "" for d in deltas)
+          finish_reasons = [ch.get("finish_reason") for ch in [(c.get("choices") or [{}])[0] for c in chunks] if ch.get("finish_reason")]
+          finish_reason = finish_reasons[-1] if finish_reasons else None
+          report_text = content if content else reasoning; print("finish_reason:", finish_reason, "| content chars:", len(content), "| reasoning chars:", len(reasoning))
           with open("kimi-audit.md", "w", encoding="utf-8") as fh:
               fh.write("# Kimi K3.1 Pro audit - Stick Arena (new bugs only)\n\n")
-              fh.write(f"finish_reason: {choice.get('finish_reason')} | usage: {json.dumps(usage)}\n\n---\n\n")
-              fh.write(content)
-          if not content:
-              sys.exit("Kimi returned empty content (raise max_tokens or retry)")
+              fh.write("finish_reason: " + str(finish_reason) + chr(10) + "---" + chr(10) + chr(10)); open(os.environ.get("GITHUB_STEP_SUMMARY") or "kimi-audit-summary.md", "a", encoding="utf-8").write("## Kimi audit result" + chr(10) + chr(10) + report_text)
+              fh.write(report_text)
+          if not report_text:
+              sys.exit("Kimi returned empty content and empty reasoning (raise max_tokens or retry)")
           PYEOF
 
       - name: Upload audit result
@@ -126,6 +126,6 @@ jobs:
         with:
           name: kimi-audit
           path: |
-            kimi-audit.md
+            kimi-audit*
             kimi-audit-response.json
           if-no-files-found: warn
